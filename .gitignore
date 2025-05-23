@@ -1,0 +1,36 @@
+# MQL5 специфичные файлы
+*.ex5
+*.mq5
+*.mqh
+*.dll
+*.lib
+
+# Временные файлы
+*.tmp
+*.temp
+*.swp
+*~
+
+# Файлы IDE
+.vscode/
+.idea/
+*.sln
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Файлы сборки
+build/
+bin/
+obj/
+
+# Логи и отладочные файлы
+*.log
+*.tst
+*.txt
+!README.txt
+
+# Другие файлы
+.DS_Store
+Thumbs.db 
