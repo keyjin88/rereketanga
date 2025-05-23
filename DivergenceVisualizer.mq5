@@ -39,7 +39,7 @@ input color HiddenBullish = clrOrange;   // Цвет скрытой бычьей
 input int HiddenBullishStyle = STYLE_DASH; // Стиль скрытой бычьей дивергенции
 input color DoubleText = clrYellow;      // Цвет текста двойной дивергенции
 input double MACDPickDif = 2.0;          // Минимальная разница для пиков MACD
-input int NrLoad = 200;                   // Количество баров для анализа
+input int NrLoad = 100;                   // Количество баров для анализа
 
 // Глобальные переменные
 int g_stoch_handle;                      // Хендл индикатора Stochastic
@@ -546,6 +546,9 @@ void DrawDivergenceLine(int idx1, int idx2, double price1, double price2,
     ObjectSetInteger(0, arrow_name, OBJPROP_WIDTH, 1);
     ObjectSetDouble(0, arrow_name, OBJPROP_PRICE, price1 + (is_bullish ? -15 * g_point : 15 * g_point));
     
+    // Получаем цену закрытия свечи, на которой возник сигнал
+    double close_price = iClose(_Symbol, PERIOD_CURRENT, idx1);
+    
     // Расчёт TP и SL на основе ATR
     double atr[];
     ArraySetAsSeries(atr, true);
@@ -555,13 +558,13 @@ void DrawDivergenceLine(int idx1, int idx2, double price1, double price2,
         double tp, sl;
         if(is_bullish)
         {
-            tp = price1 + 2 * atr_value;
-            sl = price1 - atr_value;
+            tp = close_price + 2 * atr_value;
+            sl = close_price - atr_value;
         }
         else
         {
-            tp = price1 - 2 * atr_value;
-            sl = price1 + atr_value;
+            tp = close_price - 2 * atr_value;
+            sl = close_price + atr_value;
         }
         Print("Дивергенция ", type, " на баре ", idx1, ": TP = ", tp, ", SL = ", sl);
         
