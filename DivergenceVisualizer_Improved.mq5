@@ -52,14 +52,17 @@ input bool StochBullish = true;             // Искать бычьи диве�
 input bool MACDBearish = true;              // Искать медвежьи дивергенции MACD
 input bool MACDBullish = true;              // Искать бычьи дивергенции MACD
 input bool ShowOnlyDouble = false;          // Показывать только двойные дивергенции
-input double MACDPickDif = 2.0;             // Минимальная разница для пиков MACD (в пунктах)
-input int MinBarsBetweenPeaks = 5;          // Минимальное расстояние между пиками
+input bool EnableRealtimeSignals = true;   // Включить сигналы в реальном времени
+input double MACDPickDif = 0.5;             // Минимальная разница для пиков MACD (в пунктах)
+input int MinBarsBetweenPeaks = 3;          // Минимальное расстояние между пиками
 input int MaxDivergencesToShow = 5;         // Максимальное количество дивергенций на экране
 input int MaxBarsToAnalyze = 50;            // Максимальное количество баров для поиска дивергенций
 input int NrLoad = 100;                     // Количество баров для анализа
 
-//--- Настройки визуализации
+//--- Настройки отображения
 input group "Настройки отображения"
+input bool KeepHistorySignals = true;       // Сохранять исторические сигналы на графике
+input int MaxSignalsToKeep = 50;            // Максимальное количество сигналов на графике (0 = без ограничений)
 input color RegularBearish = clrAqua;       // Цвет обычной медвежьей дивергенции
 input ENUM_LINE_STYLE RegularBearishStyle = STYLE_SOLID; // Стиль обычной медвежьей дивергенции
 input color HiddenBearish = clrBlue;        // Цвет скрытой медвежьей дивергенции
@@ -199,6 +202,12 @@ bool ValidateInputs()
         return false;
     }
     
+    if(MaxSignalsToKeep < 0 || MaxSignalsToKeep > 200)
+    {
+        Print("Максимальное количество сигналов должно быть от 0 до 200");
+        return false;
+    }
+    
     // Валидация времени сессии
     if(EnableTimeFilter)
     {
@@ -278,22 +287,54 @@ bool WaitForIndicatorData()
 //+------------------------------------------------------------------+
 void FindAllDivergences()
 {
-    // Очистка предыдущих объектов
-    RemoveOldDivergenceObjects();
+    Print("ОТЛАДКА: Начинаем поиск всех дивергенций...");
+    
+    // Управляем историей сигналов только если это необходимо
+    if(!KeepHistorySignals)
+    {
+        RemoveOldDivergenceObjects();
+    }
+    else if(MaxSignalsToKeep > 0)
+    {
+        LimitSignalsOnChart();
+    }
     
     // Поиск пиков
     FindPeaks(g_stoch_handle, 0, g_stoch_max_peaks, g_stoch_min_peaks, true);
     FindPeaks(g_macd_handle, 0, g_macd_max_peaks, g_macd_min_peaks, false);
     
+    Print("ОТЛАДКА: Найдено Stoch MAX пиков: ", ArraySize(g_stoch_max_peaks));
+    Print("ОТЛАДКА: Найдено Stoch MIN пиков: ", ArraySize(g_stoch_min_peaks));
+    Print("ОТЛАДКА: Найдено MACD MAX пиков: ", ArraySize(g_macd_max_peaks));
+    Print("ОТЛАДКА: Найдено MACD MIN пиков: ", ArraySize(g_macd_min_peaks));
+    
     // Поиск дивергенций
-    if(StochBearish) FindDivergences(g_stoch_max_peaks, "StochBearish", true, false);
-    if(StochBullish) FindDivergences(g_stoch_min_peaks, "StochBullish", false, false);
-    if(MACDBearish) FindDivergences(g_macd_max_peaks, "MACDBearish", true, true);
-    if(MACDBullish) FindDivergences(g_macd_min_peaks, "MACDBullish", false, true);
+    if(StochBearish) 
+    {
+        Print("ОТЛАДКА: Ищем медвежьи дивергенции Stochastic...");
+        FindDivergences(g_stoch_max_peaks, "StochBearish", true, false);
+    }
+    if(StochBullish) 
+    {
+        Print("ОТЛАДКА: Ищем бычьи дивергенции Stochastic...");
+        FindDivergences(g_stoch_min_peaks, "StochBullish", false, false);
+    }
+    if(MACDBearish) 
+    {
+        Print("ОТЛАДКА: Ищем медвежьи дивергенции MACD...");
+        FindDivergences(g_macd_max_peaks, "MACDBearish", true, true);
+    }
+    if(MACDBullish) 
+    {
+        Print("ОТЛАДКА: Ищем бычьи дивергенции MACD...");
+        FindDivergences(g_macd_min_peaks, "MACDBullish", false, true);
+    }
     
     // Поиск двойных дивергенций
     if(ShowOnlyDouble)
         FindDoubleDivergences();
+    
+    Print("ОТЛАДКА: Поиск дивергенций завершен");
 }
 
 //+------------------------------------------------------------------+
@@ -321,32 +362,96 @@ void FindPeaks(int indicator_handle, int buffer_index, Peak &max_peaks[], Peak &
     ArrayResize(temp_max_peaks, 0);
     ArrayResize(temp_min_peaks, 0);
     
-    // Поиск локальных экстремумов с улучшенной логикой
-    int lookback = 2; // Количество баров для сравнения с каждой стороны
+    // Поиск локальных экстремумов с улучшенной логикой для реального времени
+    int lookback = 2; // Количество баров для сравнения слева
     
-    for(int i = lookback; i < copied - lookback; i++)
+    // Определяем диапазон поиска
+    int start_bar, end_bar;
+    if(EnableRealtimeSignals)
+    {
+        start_bar = 0;  // Включаем текущий бар (0)
+        end_bar = copied;
+    }
+    else
+    {
+        start_bar = lookback;  // Консервативный режим
+        end_bar = copied - lookback;
+    }
+    
+    for(int i = start_bar; i < end_bar; i++)
     {
         double curr_val = values[i];
         datetime bar_time = iTime(_Symbol, PERIOD_CURRENT, i);
         
-        // Проверяем, является ли текущее значение максимумом
+        // Проверяем, является ли текущее значение максимумом/минимумом
         bool is_max = true;
         bool is_min = true;
         
-        for(int k = 1; k <= lookback; k++)
+        // Для текущего бара (i=0) проверяем только с правой стороны (исторические бары)
+        if(i == 0 && EnableRealtimeSignals)
         {
-            if(curr_val <= values[i - k] || curr_val <= values[i + k])
+            // Для бара 0 сравниваем только с предыдущими барами (1, 2, 3...)
+            for(int k = 1; k <= lookback && k < copied; k++)
+            {
+                if(curr_val <= values[k])  // Сравниваем с барами 1, 2
+                    is_max = false;
+                if(curr_val >= values[k])
+                    is_min = false;
+            }
+            
+            // Добавляем отладочную информацию
+            if(is_max || is_min)
+            {
+                Print("ОТЛАДКА: Найден пик на баре 0! Тип: ", (is_max ? "MAX" : "MIN"), 
+                      ", Значение: ", curr_val, ", Цена: ", (is_max ? iHigh(_Symbol, PERIOD_CURRENT, 0) : iLow(_Symbol, PERIOD_CURRENT, 0)));
+            }
+        }
+        else if(i == 1 && EnableRealtimeSignals)
+        {
+            // Для бара 1 сравниваем с баром 0 и барами 2, 3...
+            if(curr_val <= values[0] || curr_val <= values[2])
                 is_max = false;
-            if(curr_val >= values[i - k] || curr_val >= values[i + k])
+            if(curr_val >= values[0] || curr_val >= values[2])
                 is_min = false;
         }
+        else if(i < lookback)
+        {
+            // Для баров близко к началу - проверяем что можем
+            for(int k = 1; k <= i && (i - k) >= 0; k++)
+            {
+                if(curr_val <= values[i - k])
+                    is_max = false;
+                if(curr_val >= values[i - k])
+                    is_min = false;
+            }
+            for(int k = 1; k <= lookback && (i + k) < copied; k++)
+            {
+                if(curr_val <= values[i + k])
+                    is_max = false;
+                if(curr_val >= values[i + k])
+                    is_min = false;
+            }
+        }
+        else
+        {
+            // Для исторических баров - стандартная проверка с обеих сторон
+            for(int k = 1; k <= lookback; k++)
+            {
+                if((i - k >= 0 && curr_val <= values[i - k]) || 
+                   (i + k < copied && curr_val <= values[i + k]))
+                    is_max = false;
+                if((i - k >= 0 && curr_val >= values[i - k]) || 
+                   (i + k < copied && curr_val >= values[i + k]))
+                    is_min = false;
+            }
+        }
         
-        // Дополнительная фильтрация для Stochastic
+        // Дополнительная фильтрация для Stochastic - СМЯГЧЕННАЯ
         if(is_stochastic)
         {
-            // Для Stochastic ищем пики только в зонах перекупленности/перепроданности
-            if(is_max && curr_val < 70.0) is_max = false;
-            if(is_min && curr_val > 30.0) is_min = false;
+            // Для Stochastic ищем пики в расширенных зонах
+            if(is_max && curr_val < 60.0) is_max = false;  // Было 70, стало 60
+            if(is_min && curr_val > 40.0) is_min = false;  // Было 30, стало 40
         }
         
         if(is_max)
@@ -359,6 +464,9 @@ void FindPeaks(int indicator_handle, int buffer_index, Peak &max_peaks[], Peak &
             peak.time = bar_time;
             ArrayResize(temp_max_peaks, ArraySize(temp_max_peaks) + 1);
             temp_max_peaks[ArraySize(temp_max_peaks) - 1] = peak;
+            
+            // Отладка для всех найденных пиков
+            Print("ОТЛАДКА: Пик MAX на баре ", i, ", Значение: ", curr_val, ", Цена: ", price);
         }
         
         if(is_min)
@@ -371,6 +479,9 @@ void FindPeaks(int indicator_handle, int buffer_index, Peak &max_peaks[], Peak &
             peak.time = bar_time;
             ArrayResize(temp_min_peaks, ArraySize(temp_min_peaks) + 1);
             temp_min_peaks[ArraySize(temp_min_peaks) - 1] = peak;
+            
+            // Отладка для всех найденных пиков
+            Print("ОТЛАДКА: Пик MIN на баре ", i, ", Значение: ", curr_val, ", Цена: ", price);
         }
     }
     
@@ -439,102 +550,260 @@ bool IsPeakStronger(const Peak &peak1, const Peak &peak2)
 //+------------------------------------------------------------------+
 void FindDivergences(Peak &peaks[], string type, bool is_bearish, bool is_macd)
 {
-    int peaks_count = ArraySize(peaks);
-    if(peaks_count < 2) return;
-    
-    // Структура для хранения найденных дивергенций с их силой
-    DivergenceInfo found_divergences[];
-    ArrayResize(found_divergences, 0);
-    
-    // Ищем дивергенции только среди последних пиков
-    int max_search_distance = MathMin(peaks_count, 10); // Максимум 10 последних пиков
-    
-    for(int i = 0; i < max_search_distance - 1; i++)
+    if(EnableRealtimeSignals)
     {
-        for(int j = i + 1; j < max_search_distance; j++)
+        FindDivergencesRealtime(peaks, type, is_bearish, is_macd);
+    }
+    else
+    {
+        FindDivergencesConservative(peaks, type, is_bearish, is_macd);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Поиск дивергенций в режиме реального времени                    |
+//+------------------------------------------------------------------+
+void FindDivergencesRealtime(Peak &peaks[], string type, bool is_bearish, bool is_macd)
+{
+    int peaks_count = ArraySize(peaks);
+    Print("ОТЛАДКА: FindDivergencesRealtime - тип: ", type, ", количество пиков: ", peaks_count);
+    
+    if(peaks_count < 2) 
+    {
+        Print("ОТЛАДКА: Недостаточно пиков для анализа: ", peaks_count);
+        return;
+    }
+    
+    // Проверяем, есть ли пик на текущем баре (индекс 0)
+    int current_bar_peak_idx = -1;
+    for(int i = 0; i < peaks_count; i++)
+    {
+        Print("ОТЛАДКА: Пик ", i, " - индекс бара: ", peaks[i].index, ", значение: ", peaks[i].value);
+        if(peaks[i].index == 0)
         {
-            // Проверка ограничений
-            if(peaks[j].index - peaks[i].index < MinBarsBetweenPeaks) continue;
-            if(peaks[i].index > MaxBarsToAnalyze) continue; // Слишком старые пики
-            
-            // Фильтр по времени торговой сессии
-            if(EnableTimeFilter && ShowOnlySessionSignals)
-            {
-                if(!IsTimeInSession(peaks[i].time) || !IsTimeInSession(peaks[j].time))
-                    continue; // Пропускаем дивергенцию, если хотя бы один пик вне сессии
-            }
-            
-            // Проверка условий дивергенции
-            bool divergence_found = false;
-            double strength = 0.0;
-            
-            if(is_bearish)
-            {
-                // Медвежья дивергенция: цена растет, индикатор падает
-                if(peaks[i].price < peaks[j].price && peaks[i].value > peaks[j].value)
-                {
-                    if(is_macd)
-                    {
-                        double macd_diff = MathAbs(peaks[i].value - peaks[j].value);
-                        if(macd_diff >= MACDPickDif * g_point)
-                        {
-                            divergence_found = true;
-                            strength = macd_diff + (peaks[j].price - peaks[i].price) / g_point;
-                        }
-                    }
-                    else
-                    {
-                        divergence_found = true;
-                        strength = (peaks[i].value - peaks[j].value) + (peaks[j].price - peaks[i].price) / g_point;
-                    }
-                }
-            }
-            else
-            {
-                // Бычья дивергенция: цена падает, индикатор растет
-                if(peaks[i].price > peaks[j].price && peaks[i].value < peaks[j].value)
-                {
-                    if(is_macd)
-                    {
-                        double macd_diff = MathAbs(peaks[i].value - peaks[j].value);
-                        if(macd_diff >= MACDPickDif * g_point)
-                        {
-                            divergence_found = true;
-                            strength = macd_diff + (peaks[i].price - peaks[j].price) / g_point;
-                        }
-                    }
-                    else
-                    {
-                        divergence_found = true;
-                        strength = (peaks[j].value - peaks[i].value) + (peaks[i].price - peaks[j].price) / g_point;
-                    }
-                }
-            }
-            
-            if(divergence_found)
-            {
-                DivergenceInfo div_info;
-                div_info.peak1_idx = i;
-                div_info.peak2_idx = j;
-                div_info.strength = strength;
-                ArrayResize(found_divergences, ArraySize(found_divergences) + 1);
-                found_divergences[ArraySize(found_divergences) - 1] = div_info;
-            }
+            current_bar_peak_idx = i;
+            Print("ОТЛАДКА: Найден пик на текущем баре (индекс 0)!");
+            break;
         }
     }
     
-    // Сортируем дивергенции по силе (самые сильные первыми)
-    SortDivergencesByStrength(found_divergences);
-    
-    // Отображаем только лучшие дивергенции
-    int max_to_show = MathMin(ArraySize(found_divergences), MaxDivergencesToShow);
-    for(int k = 0; k < max_to_show; k++)
+    // Если на текущем баре нет пика - нет сигнала
+    if(current_bar_peak_idx == -1) 
     {
-        DivergenceInfo div = found_divergences[k];
-        
-        DrawDivergence(peaks[div.peak1_idx], peaks[div.peak2_idx], type, is_bearish);
-        SendDivergenceAlert(type, peaks[div.peak1_idx].index);
+        Print("ОТЛАДКА: НЕТ пика на текущем баре - выход");
+        return;
     }
+    
+    Peak current_peak = peaks[current_bar_peak_idx];
+    Print("ОТЛАДКА: Текущий пик - бар: ", current_peak.index, ", значение: ", current_peak.value, ", цена: ", current_peak.price);
+    
+    // Структура для хранения найденных дивергенций
+    DivergenceInfo found_divergences[];
+    ArrayResize(found_divergences, 0);
+    
+    // Ищем дивергенции только между текущим пиком и историческими пиками
+    for(int i = 0; i < peaks_count; i++)
+    {
+        if(i == current_bar_peak_idx) continue; // Пропускаем сам текущий пик
+        
+        Peak historical_peak = peaks[i];
+        Print("ОТЛАДКА: Проверка с историческим пиком - бар: ", historical_peak.index, ", значение: ", historical_peak.value, ", цена: ", historical_peak.price);
+        
+        // Проверка ограничений
+        if(historical_peak.index - current_peak.index < MinBarsBetweenPeaks) 
+        {
+            Print("ОТЛАДКА: Слишком близко - расстояние: ", historical_peak.index - current_peak.index, " < ", MinBarsBetweenPeaks);
+            continue;
+        }
+        if(historical_peak.index > MaxBarsToAnalyze) 
+        {
+            Print("ОТЛАДКА: Слишком старый пик - индекс: ", historical_peak.index, " > ", MaxBarsToAnalyze);
+            continue;
+        }
+        
+        // Фильтр по времени торговой сессии
+        if(EnableTimeFilter && ShowOnlySessionSignals)
+        {
+            if(!IsTimeInSession(current_peak.time) || !IsTimeInSession(historical_peak.time))
+            {
+                Print("ОТЛАДКА: Пик вне торговой сессии");
+                continue;
+            }
+        }
+        
+        // Проверка условий дивергенции между ТЕКУЩИМ пиком и историческим
+        bool divergence_found = false;
+        double strength = 0.0;
+        
+        if(is_bearish)
+        {
+            // Медвежья дивергенция: цена растет, индикатор падает
+            // Сравниваем исторический пик с текущим
+            bool price_condition = historical_peak.price < current_peak.price;
+            bool indicator_condition = historical_peak.value > current_peak.value;
+            
+            Print("ОТЛАДКА: Медвежья дивергенция - цена растет: ", price_condition, " (", historical_peak.price, " < ", current_peak.price, "), индикатор падает: ", indicator_condition, " (", historical_peak.value, " > ", current_peak.value, ")");
+            
+            if(price_condition && indicator_condition)
+            {
+                if(is_macd)
+                {
+                    double macd_diff = MathAbs(historical_peak.value - current_peak.value);
+                    Print("ОТЛАДКА: MACD diff: ", macd_diff, ", требуется: ", MACDPickDif * g_point);
+                    if(macd_diff >= MACDPickDif * g_point)
+                    {
+                        divergence_found = true;
+                        strength = macd_diff + (current_peak.price - historical_peak.price) / g_point;
+                        Print("ОТЛАДКА: MACD дивергенция найдена! Сила: ", strength);
+                    }
+                }
+                else
+                {
+                    divergence_found = true;
+                    strength = (historical_peak.value - current_peak.value) + (current_peak.price - historical_peak.price) / g_point;
+                    Print("ОТЛАДКА: Stoch дивергенция найдена! Сила: ", strength);
+                }
+            }
+        }
+        else
+        {
+            // Бычья дивергенция: цена падает, индикатор растет
+            bool price_condition = historical_peak.price > current_peak.price;
+            bool indicator_condition = historical_peak.value < current_peak.value;
+            
+            Print("ОТЛАДКА: Бычья дивергенция - цена падает: ", price_condition, " (", historical_peak.price, " > ", current_peak.price, "), индикатор растет: ", indicator_condition, " (", historical_peak.value, " < ", current_peak.value, ")");
+            
+            if(price_condition && indicator_condition)
+            {
+                if(is_macd)
+                {
+                    double macd_diff = MathAbs(historical_peak.value - current_peak.value);
+                    Print("ОТЛАДКА: MACD diff: ", macd_diff, ", требуется: ", MACDPickDif * g_point);
+                    if(macd_diff >= MACDPickDif * g_point)
+                    {
+                        divergence_found = true;
+                        strength = macd_diff + (historical_peak.price - current_peak.price) / g_point;
+                        Print("ОТЛАДКА: MACD дивергенция найдена! Сила: ", strength);
+                    }
+                }
+                else
+                {
+                    divergence_found = true;
+                    strength = (current_peak.value - historical_peak.value) + (historical_peak.price - current_peak.price) / g_point;
+                    Print("ОТЛАДКА: Stoch дивергенция найдена! Сила: ", strength);
+                }
+            }
+        }
+        
+        if(divergence_found)
+        {
+            DivergenceInfo div_info;
+            div_info.peak1_idx = current_bar_peak_idx;  // Всегда текущий пик
+            div_info.peak2_idx = i;                      // Исторический пик
+            div_info.strength = strength;
+            ArrayResize(found_divergences, ArraySize(found_divergences) + 1);
+            found_divergences[ArraySize(found_divergences) - 1] = div_info;
+            
+            Print("ОТЛАДКА: Дивергенция добавлена в список! Всего: ", ArraySize(found_divergences));
+        }
+    }
+    
+    // Если нашли дивергенции, берем только самую сильную для текущего бара
+    if(ArraySize(found_divergences) > 0)
+    {
+        Print("ОТЛАДКА: Найдено дивергенций: ", ArraySize(found_divergences), " - отображаем лучшую");
+        
+        // Сортируем по силе
+        SortDivergencesByStrength(found_divergences);
+        
+        // Показываем только ОДНУ самую сильную дивергенцию на текущем баре
+        DivergenceInfo best_div = found_divergences[0];
+        
+        Print("ОТЛАДКА: Отображаем дивергенцию с силой: ", best_div.strength);
+        
+        // Стрелка ВСЕГДА на текущем баре (бар 0)
+        DrawDivergence(peaks[best_div.peak1_idx], peaks[best_div.peak2_idx], type, is_bearish);
+        SendDivergenceAlert(type, 0); // Всегда бар 0
+    }
+    else
+    {
+        Print("ОТЛАДКА: Дивергенции НЕ найдены");
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Отрисовка дивергенции в режиме реального времени                |
+//+------------------------------------------------------------------+
+void DrawDivergence(const Peak &peak1, const Peak &peak2, string type, bool is_bearish)
+{
+    // В новой логике peak1 всегда текущий пик (индекс 0), peak2 - исторический
+    Peak current_peak = peak1;  // Текущий пик (всегда на баре 0)
+    Peak historical_peak = peak2; // Исторический пик
+    
+    string base_name = "Div_" + type + "_" + IntegerToString(current_peak.index) + "_" + IntegerToString(historical_peak.index);
+    
+    // Определяем цвет и стиль
+    color line_color = is_bearish ? RegularBearish : RegularBullish;
+    
+    // Стрелка ВСЕГДА на текущем пике (бар 0)
+    string arrow_name = base_name + "_arrow";
+    if(ObjectCreate(0, arrow_name, OBJ_ARROW, 0, current_peak.time, current_peak.price))
+    {
+        ObjectSetInteger(0, arrow_name, OBJPROP_ARROWCODE, is_bearish ? 242 : 241);
+        ObjectSetInteger(0, arrow_name, OBJPROP_COLOR, line_color);
+        ObjectSetInteger(0, arrow_name, OBJPROP_WIDTH, 3);
+        
+        // Смещаем стрелку
+        double offset = is_bearish ? 20 * g_point : -20 * g_point;
+        ObjectSetDouble(0, arrow_name, OBJPROP_PRICE, current_peak.price + offset);
+    }
+    
+    // Текстовая метка ВСЕГДА на текущем баре
+    string text_name = base_name + "_text";
+    if(ObjectCreate(0, text_name, OBJ_TEXT, 0, current_peak.time, current_peak.price))
+    {
+        string div_text = is_bearish ? "МЕДВЕЖЬЯ" : "БЫЧЬЯ";
+        if(StringFind(type, "Stoch") >= 0)
+            div_text += " STOCH";
+        else
+            div_text += " MACD";
+        
+        // Добавляем время текущего бара
+        MqlDateTime time_struct;
+        TimeToStruct(current_peak.time, time_struct);
+        string time_str = StringFormat("%02d:%02d", time_struct.hour, time_struct.min);
+        
+        if(EnableTimeFilter)
+        {
+            string session_mark = IsTimeInSession(current_peak.time) ? "✓" : "✗";
+            div_text += StringFormat(" [%s %s]", time_str, session_mark);
+        }
+        else
+        {
+            div_text += StringFormat(" [%s]", time_str);
+        }
+        
+        // Всегда добавляем маркер LIVE, так как сигнал всегда на текущем баре
+        div_text += " 🔴LIVE";
+        
+        // Добавляем информацию об историческом пике
+        MqlDateTime hist_time_struct;
+        TimeToStruct(historical_peak.time, hist_time_struct);
+        string hist_time_str = StringFormat("%02d:%02d", hist_time_struct.hour, hist_time_struct.min);
+        div_text += StringFormat(" vs %s", hist_time_str);
+            
+        ObjectSetString(0, text_name, OBJPROP_TEXT, div_text);
+        ObjectSetInteger(0, text_name, OBJPROP_COLOR, line_color);
+        ObjectSetInteger(0, text_name, OBJPROP_FONTSIZE, 9);
+        ObjectSetInteger(0, text_name, OBJPROP_ANCHOR, ANCHOR_CENTER);
+        
+        // Смещаем текст
+        double text_offset = is_bearish ? 30 * g_point : -30 * g_point;
+        ObjectSetDouble(0, text_name, OBJPROP_PRICE, current_peak.price + text_offset);
+    }
+    
+    // TP/SL уровни на основе текущего пика
+    DrawTPSLLevels(current_peak, type, is_bearish, base_name);
 }
 
 //+------------------------------------------------------------------+
@@ -571,31 +840,135 @@ void SortDivergencesByStrength(DivergenceInfo &divergences[])
 }
 
 //+------------------------------------------------------------------+
-//| Отрисовка дивергенции                                           |
+//| Поиск дивергенций в консервативном режиме (с задержкой)          |
 //+------------------------------------------------------------------+
-void DrawDivergence(const Peak &peak1, const Peak &peak2, string type, bool is_bearish)
+void FindDivergencesConservative(Peak &peaks[], string type, bool is_bearish, bool is_macd)
 {
+    int peaks_count = ArraySize(peaks);
+    if(peaks_count < 2) return;
+    
+    // Структура для хранения найденных дивергенций с их силой
+    DivergenceInfo found_divergences[];
+    ArrayResize(found_divergences, 0);
+    
+    // Ищем дивергенции среди исторических пиков (исключаем последние 2 бара)
+    int max_search_distance = MathMin(peaks_count, 10);
+    
+    for(int i = 0; i < max_search_distance - 1; i++)
+    {
+        for(int j = i + 1; j < max_search_distance; j++)
+        {
+            // Исключаем пики на последних 2 барах
+            if(peaks[i].index < 2 || peaks[j].index < 2) continue;
+            
+            // Проверка ограничений
+            if(peaks[j].index - peaks[i].index < MinBarsBetweenPeaks) continue;
+            if(peaks[i].index > MaxBarsToAnalyze) continue;
+            
+            // Фильтр по времени торговой сессии
+            if(EnableTimeFilter && ShowOnlySessionSignals)
+            {
+                if(!IsTimeInSession(peaks[i].time) || !IsTimeInSession(peaks[j].time))
+                    continue;
+            }
+            
+            // Проверка условий дивергенции
+            bool divergence_found = false;
+            double strength = 0.0;
+            
+            if(is_bearish)
+            {
+                if(peaks[i].price < peaks[j].price && peaks[i].value > peaks[j].value)
+                {
+                    if(is_macd)
+                    {
+                        double macd_diff = MathAbs(peaks[i].value - peaks[j].value);
+                        if(macd_diff >= MACDPickDif * g_point)
+                        {
+                            divergence_found = true;
+                            strength = macd_diff + (peaks[j].price - peaks[i].price) / g_point;
+                        }
+                    }
+                    else
+                    {
+                        divergence_found = true;
+                        strength = (peaks[i].value - peaks[j].value) + (peaks[j].price - peaks[i].price) / g_point;
+                    }
+                }
+            }
+            else
+            {
+                if(peaks[i].price > peaks[j].price && peaks[i].value < peaks[j].value)
+                {
+                    if(is_macd)
+                    {
+                        double macd_diff = MathAbs(peaks[i].value - peaks[j].value);
+                        if(macd_diff >= MACDPickDif * g_point)
+                        {
+                            divergence_found = true;
+                            strength = macd_diff + (peaks[i].price - peaks[j].price) / g_point;
+                        }
+                    }
+                    else
+                    {
+                        divergence_found = true;
+                        strength = (peaks[j].value - peaks[i].value) + (peaks[i].price - peaks[j].price) / g_point;
+                    }
+                }
+            }
+            
+            if(divergence_found)
+            {
+                DivergenceInfo div_info;
+                div_info.peak1_idx = i;
+                div_info.peak2_idx = j;
+                div_info.strength = strength;
+                ArrayResize(found_divergences, ArraySize(found_divergences) + 1);
+                found_divergences[ArraySize(found_divergences) - 1] = div_info;
+            }
+        }
+    }
+    
+    // Сортируем и показываем лучшие дивергенции
+    if(ArraySize(found_divergences) > 0)
+    {
+        SortDivergencesByStrength(found_divergences);
+        
+        int max_to_show = MathMin(ArraySize(found_divergences), MaxDivergencesToShow);
+        for(int k = 0; k < max_to_show; k++)
+        {
+            DivergenceInfo div = found_divergences[k];
+            DrawDivergenceConservative(peaks[div.peak1_idx], peaks[div.peak2_idx], type, is_bearish);
+            SendDivergenceAlert(type, peaks[div.peak1_idx].index);
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Отрисовка дивергенции в консервативном режиме                   |
+//+------------------------------------------------------------------+
+void DrawDivergenceConservative(const Peak &peak1, const Peak &peak2, string type, bool is_bearish)
+{
+    // В консервативном режиме выбираем более свежий пик
+    Peak signal_peak = (peak1.index < peak2.index) ? peak1 : peak2;
+    
     string base_name = "Div_" + type + "_" + IntegerToString(peak1.index) + "_" + IntegerToString(peak2.index);
     
-    // Определяем цвет и стиль
     color line_color = is_bearish ? RegularBearish : RegularBullish;
     
-    // Добавляем стрелку на первом пике
     string arrow_name = base_name + "_arrow";
-    if(ObjectCreate(0, arrow_name, OBJ_ARROW, 0, peak1.time, peak1.price))
+    if(ObjectCreate(0, arrow_name, OBJ_ARROW, 0, signal_peak.time, signal_peak.price))
     {
         ObjectSetInteger(0, arrow_name, OBJPROP_ARROWCODE, is_bearish ? 242 : 241);
         ObjectSetInteger(0, arrow_name, OBJPROP_COLOR, line_color);
         ObjectSetInteger(0, arrow_name, OBJPROP_WIDTH, 3);
         
-        // Смещаем стрелку
         double offset = is_bearish ? 20 * g_point : -20 * g_point;
-        ObjectSetDouble(0, arrow_name, OBJPROP_PRICE, peak1.price + offset);
+        ObjectSetDouble(0, arrow_name, OBJPROP_PRICE, signal_peak.price + offset);
     }
     
-    // Добавляем текстовую метку
     string text_name = base_name + "_text";
-    if(ObjectCreate(0, text_name, OBJ_TEXT, 0, peak1.time, peak1.price))
+    if(ObjectCreate(0, text_name, OBJ_TEXT, 0, signal_peak.time, signal_peak.price))
     {
         string div_text = is_bearish ? "МЕДВЕЖЬЯ" : "БЫЧЬЯ";
         if(StringFind(type, "Stoch") >= 0)
@@ -603,33 +976,22 @@ void DrawDivergence(const Peak &peak1, const Peak &peak2, string type, bool is_b
         else
             div_text += " MACD";
         
-        // Добавляем время и статус сессии
         MqlDateTime time_struct;
-        TimeToStruct(peak1.time, time_struct);
+        TimeToStruct(signal_peak.time, time_struct);
         string time_str = StringFormat("%02d:%02d", time_struct.hour, time_struct.min);
         
-        if(EnableTimeFilter)
-        {
-            string session_mark = IsTimeInSession(peak1.time) ? "✓" : "✗";
-            div_text += StringFormat(" [%s %s]", time_str, session_mark);
-        }
-        else
-        {
-            div_text += StringFormat(" [%s]", time_str);
-        }
+        div_text += StringFormat(" [%s] КОНСЕРВ.", time_str);
             
         ObjectSetString(0, text_name, OBJPROP_TEXT, div_text);
         ObjectSetInteger(0, text_name, OBJPROP_COLOR, line_color);
         ObjectSetInteger(0, text_name, OBJPROP_FONTSIZE, 9);
         ObjectSetInteger(0, text_name, OBJPROP_ANCHOR, ANCHOR_CENTER);
         
-        // Смещаем текст
         double text_offset = is_bearish ? 30 * g_point : -30 * g_point;
-        ObjectSetDouble(0, text_name, OBJPROP_PRICE, peak1.price + text_offset);
+        ObjectSetDouble(0, text_name, OBJPROP_PRICE, signal_peak.price + text_offset);
     }
     
-    // Добавляем TP/SL уровни
-    DrawTPSLLevels(peak1, type, is_bearish, base_name);
+    DrawTPSLLevels(signal_peak, type, is_bearish, base_name);
 }
 
 //+------------------------------------------------------------------+
@@ -785,13 +1147,17 @@ void SendDivergenceAlert(string type, int bar_index)
     string time_str = StringFormat("%02d:%02d", time_struct.hour, time_struct.min);
     string session_status = IsTimeInSession(bar_time) ? "В СЕССИИ" : "ВНЕ СЕССИИ";
     
-    string message = StringFormat("🎯 Дивергенция %s обнаружена!\n⏰ Время: %s (%s)\n📊 Символ: %s\n📍 Бар: %d", 
-                                  type, time_str, session_status, _Symbol, bar_index);
+    // Определяем тип сигнала
+    string signal_type = (bar_index == 0) ? "🔴 LIVE СИГНАЛ" : "📊 Исторический сигнал";
+    
+    string message = StringFormat("%s: Дивергенция %s обнаружена!\n⏰ Время: %s (%s)\n📊 Символ: %s\n📍 Бар: %d%s", 
+                                  signal_type, type, time_str, session_status, _Symbol, bar_index,
+                                  (bar_index == 0) ? " (ТЕКУЩИЙ)" : "");
     
     Alert(message);
     
     if(EnableEmailAlerts)
-        SendMail("Divergence Alert - " + _Symbol, message);
+        SendMail("Divergence Alert - " + _Symbol + " " + signal_type, message);
         
     if(EnablePushAlerts)
         SendNotification(message);
@@ -811,6 +1177,83 @@ void RemoveOldDivergenceObjects()
         {
             ObjectDelete(0, obj_name);
         }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Ограничение количества сигналов на графике                      |
+//+------------------------------------------------------------------+
+void LimitSignalsOnChart()
+{
+    if(MaxSignalsToKeep <= 0) return;
+    
+    // Собираем все объекты дивергенций с их временными метками
+    struct DivergenceObject
+    {
+        string name;
+        datetime time;
+    };
+    
+    DivergenceObject div_objects[];
+    ArrayResize(div_objects, 0);
+    
+    int total = ObjectsTotal(0);
+    for(int i = 0; i < total; i++)
+    {
+        string obj_name = ObjectName(0, i);
+        // Проверяем только основные объекты (стрелки), чтобы не дублировать подсчет
+        if(StringFind(obj_name, "Div_") == 0 && StringFind(obj_name, "_arrow") > 0)
+        {
+            datetime obj_time = (datetime)ObjectGetInteger(0, obj_name, OBJPROP_TIME);
+            
+            int idx = ArraySize(div_objects);
+            ArrayResize(div_objects, idx + 1);
+            div_objects[idx].name = StringSubstr(obj_name, 0, StringFind(obj_name, "_arrow")); // Базовое имя без суффикса
+            div_objects[idx].time = obj_time;
+        }
+    }
+    
+    // Если сигналов больше лимита, удаляем самые старые
+    int objects_count = ArraySize(div_objects);
+    if(objects_count > MaxSignalsToKeep)
+    {
+        // Сортируем по времени (самые старые в начале)
+        for(int i = 0; i < objects_count - 1; i++)
+        {
+            for(int j = i + 1; j < objects_count; j++)
+            {
+                if(div_objects[i].time > div_objects[j].time)
+                {
+                    // Меняем местами
+                    string temp_name = div_objects[i].name;
+                    datetime temp_time = div_objects[i].time;
+                    
+                    div_objects[i].name = div_objects[j].name;
+                    div_objects[i].time = div_objects[j].time;
+                    
+                    div_objects[j].name = temp_name;
+                    div_objects[j].time = temp_time;
+                }
+            }
+        }
+        
+        // Удаляем самые старые объекты
+        int to_remove = objects_count - MaxSignalsToKeep;
+        for(int i = 0; i < to_remove; i++)
+        {
+            string base_name = div_objects[i].name;
+            
+            // Удаляем все связанные объекты
+            ObjectDelete(0, base_name + "_arrow");
+            ObjectDelete(0, base_name + "_text");
+            ObjectDelete(0, base_name + "_tp");
+            ObjectDelete(0, base_name + "_sl");
+            ObjectDelete(0, base_name + "_tp_text");
+            ObjectDelete(0, base_name + "_sl_text");
+            ObjectDelete(0, base_name + "_double");
+        }
+        
+        Print("ОТЛАДКА: Удалено ", to_remove, " старых сигналов. Осталось на графике: ", MaxSignalsToKeep);
     }
 }
 

@@ -1,0 +1,1293 @@
+//+------------------------------------------------------------------+
+//|                                      DivergenceTrader_EA.mq5    |
+//|                          Copyright 2024, Expert Advisor Version |
+//|                             Автоматическая торговля дивергенций |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2024, Expert Advisor Version"
+#property link      ""
+#property version   "1.00"
+
+#include <Trade\Trade.mqh>
+#include <Trade\PositionInfo.mqh>
+#include <Trade\OrderInfo.mqh>
+
+//--- Объекты для торговли
+CTrade        m_trade;
+CPositionInfo m_position;
+COrderInfo    m_order;
+
+//+------------------------------------------------------------------+
+//| Структуры для хранения пиков и дивергенций                      |
+//+------------------------------------------------------------------+
+struct Peak
+{
+   int      index;
+   double   value;
+   double   price;
+   datetime time;
+};
+
+struct TradeSignal
+{
+    string   type;           // Тип сигнала (StochBearish, StochBullish, MACDBearish, MACDBullish)
+    bool     is_bearish;     // Направление сигнала
+    double   entry_price;    // Цена входа
+    double   tp_price;       // Take Profit
+    double   sl_price;       // Stop Loss
+    double   strength;       // Сила сигнала
+    datetime signal_time;    // Время сигнала
+    int      signal_bar;     // Бар сигнала
+};
+
+//--- Входные параметры для Stochastic
+input group "=== Настройки Stochastic ==="
+input int StochKPeriod = 8;                 // Период %K
+input int StochDPeriod = 3;                 // Период %D
+input int StochSlowing = 5;                 // Замедление
+
+//--- Входные параметры для MACD
+input group "=== Настройки MACD ==="
+input int MACDFastEMA = 12;                 // Быстрый EMA
+input int MACDSlowEMA = 26;                 // Медленный EMA
+input int MACDSignalPeriod = 9;             // Период сигнальной линии
+
+//--- Настройки поиска дивергенций
+input group "=== Настройки дивергенций ==="
+input bool StochBearish = true;             // Торговать медвежьи дивергенции Stochastic
+input bool StochBullish = true;             // Торговать бычьи дивергенции Stochastic
+input bool MACDBearish = true;              // Торговать медвежьи дивергенции MACD
+input bool MACDBullish = true;              // Торговать бычьи дивергенции MACD
+input bool OnlyDoubleDivergences = false;   // Торговать только двойные дивергенции
+input double MACDPickDif = 0.5;             // Минимальная разница для пиков MACD
+input int MinBarsBetweenPeaks = 3;          // Минимальное расстояние между пиками
+input int MaxBarsToAnalyze = 50;            // Максимальное количество баров для анализа
+input int NrLoad = 100;                     // Количество баров для анализа
+
+//--- Настройки торговли
+input group "=== Настройки торговли ==="
+input bool EnableTrading = true;            // Разрешить торговлю
+input bool BacktestMode = false;            // Режим тестирования (анализ исторических данных)
+input double LotSize = 0.1;                 // Размер лота
+input bool UseAutoLotSize = false;          // Автоматический расчет лота
+input double RiskPercent = 2.0;             // Риск на сделку (% от депозита)
+input int MaxPositions = 1;                 // Максимальное количество позиций
+input bool AllowOpposite = false;           // Разрешить противоположные позиции
+input int MagicNumber = 123456;             // Магический номер
+
+//--- Настройки TP/SL
+input group "=== Настройки TP/SL ==="
+input int ATRPeriod = 14;                   // Период ATR
+input double ATRMultiplierTP = 3.0;         // Множитель ATR для TP (увеличено с 2.0)
+input double ATRMultiplierSL = 1.5;         // Множитель ATR для SL (увеличено с 1.0)
+input bool UseFixedTPSL = true;             // Использовать фиксированные TP/SL (включено по умолчанию)
+input int FixedTPPoints = 800;              // Фиксированный TP в пунктах (увеличено с 500)
+input int FixedSLPoints = 400;              // Фиксированный SL в пунктах (увеличено с 250)
+input double MinStopDistanceMultiplier = 2.0; // Множитель минимальной дистанции стопов
+
+//--- Настройки трейлинга
+input group "=== Настройки трейлинга ==="
+input bool EnableTrailing = true;           // Включить трейлинг стоп
+input double TrailingStart = 200;           // Начать трейлинг после (пунктов)
+input double TrailingStop = 100;            // Шаг трейлинга (пунктов)
+input double TrailingStep = 50;             // Минимальный шаг (пунктов)
+
+//--- Настройки времени торговли
+input group "=== Фильтр времени торговли ==="
+input bool EnableTimeFilter = true;         // Включить фильтр времени
+input string SessionStartTime = "08:00";    // Время начала торговой сессии
+input string SessionEndTime = "17:00";      // Время окончания торговой сессии
+input bool TradeMonday = true;              // Торговать в понедельник
+input bool TradeTuesday = true;             // Торговать во вторник
+input bool TradeWednesday = true;           // Торговать в среду
+input bool TradeThursday = true;            // Торговать в четверг
+input bool TradeFriday = true;              // Торговать в пятницу
+
+//--- Настройки силы сигнала
+input group "=== Фильтры силы сигнала ==="
+input bool EnableStrengthFilter = true;     // Включить фильтр силы сигнала
+input double MinSignalStrength = 5.0;       // Минимальная сила сигнала (было 10.0)
+input bool RequireStochInZone = true;       // Требовать Stochastic в зоне
+input double StochOverboughtLevel = 60.0;   // Уровень перекупленности (было 70.0)
+input double StochOversoldLevel = 40.0;     // Уровень перепроданности (было 30.0)
+
+//--- Настройки уведомлений
+input group "=== Настройки уведомлений ==="
+input bool EnableAlerts = true;             // Включить алерты
+input bool EnableEmailAlerts = false;       // Включить email-уведомления
+input bool EnablePushAlerts = false;        // Включить push-уведомления
+input bool AlertOnEntry = true;             // Уведомлять о входах
+input bool AlertOnClose = true;             // Уведомлять о закрытиях
+
+//--- Глобальные переменные
+int g_stoch_handle;                         // Хендл индикатора Stochastic
+int g_macd_handle;                          // Хендл индикатора MACD
+int g_atr_handle;                           // Хендл индикатора ATR
+double g_point;                             // Размер пункта
+datetime g_last_signal_time;                // Время последнего сигнала
+datetime g_last_bar_time;                   // Время последнего бара
+bool g_first_run;                           // Флаг первого запуска
+
+//--- Массивы для хранения пиков
+Peak g_stoch_max_peaks[];
+Peak g_stoch_min_peaks[];
+Peak g_macd_max_peaks[];
+Peak g_macd_min_peaks[];
+
+//--- Статистика
+struct TradingStats
+{
+    int total_signals;
+    int total_trades;
+    int winning_trades;
+    int losing_trades;
+    double total_profit;
+    double max_drawdown;
+    datetime last_trade_time;
+};
+
+TradingStats g_stats;
+
+//+------------------------------------------------------------------+
+//| Инициализация эксперта                                          |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+    Print("=== Инициализация DivergenceTrader EA ===");
+    
+    // Валидация параметров
+    if(!ValidateInputs())
+        return INIT_PARAMETERS_INCORRECT;
+    
+    // Инициализация торговых объектов
+    m_trade.SetExpertMagicNumber(MagicNumber);
+    m_trade.SetMarginMode();
+    m_trade.SetTypeFillingBySymbol(_Symbol);
+    m_trade.SetDeviationInPoints(10);
+    
+    // Инициализация индикаторов
+    g_stoch_handle = iStochastic(_Symbol, PERIOD_CURRENT, StochKPeriod, StochDPeriod, StochSlowing, MODE_SMA, STO_LOWHIGH);
+    if(g_stoch_handle == INVALID_HANDLE)
+    {
+        Print("❌ Ошибка создания индикатора Stochastic: ", GetLastError());
+        return INIT_FAILED;
+    }
+    
+    g_macd_handle = iMACD(_Symbol, PERIOD_CURRENT, MACDFastEMA, MACDSlowEMA, MACDSignalPeriod, PRICE_CLOSE);
+    if(g_macd_handle == INVALID_HANDLE)
+    {
+        Print("❌ Ошибка создания индикатора MACD: ", GetLastError());
+        IndicatorRelease(g_stoch_handle);
+        return INIT_FAILED;
+    }
+    
+    g_atr_handle = iATR(_Symbol, PERIOD_CURRENT, ATRPeriod);
+    if(g_atr_handle == INVALID_HANDLE)
+    {
+        Print("❌ Ошибка создания индикатора ATR: ", GetLastError());
+        IndicatorRelease(g_stoch_handle);
+        IndicatorRelease(g_macd_handle);
+        return INIT_FAILED;
+    }
+    
+    // Инициализация переменных
+    g_point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    g_last_signal_time = 0;
+    g_last_bar_time = 0;
+    g_first_run = true;
+    
+    // Инициализация статистики
+    ZeroMemory(g_stats);
+    
+    // Изменение размера массивов
+    ArrayResize(g_stoch_max_peaks, 0);
+    ArrayResize(g_stoch_min_peaks, 0);
+    ArrayResize(g_macd_max_peaks, 0);
+    ArrayResize(g_macd_min_peaks, 0);
+    
+    Print("✅ Инициализация завершена успешно");
+    Print("📊 Торговля: ", (EnableTrading ? "ВКЛЮЧЕНА" : "ОТКЛЮЧЕНА"));
+    Print("💰 Размер лота: ", (UseAutoLotSize ? "Авто (" + DoubleToString(RiskPercent, 1) + "%)" : DoubleToString(LotSize, 2)));
+    Print("🎯 Максимум позиций: ", MaxPositions);
+    Print("🕒 Фильтр времени: ", (EnableTimeFilter ? SessionStartTime + " - " + SessionEndTime : "ОТКЛЮЧЕН"));
+    
+    return INIT_SUCCEEDED;
+}
+
+//+------------------------------------------------------------------+
+//| Валидация входных параметров                                    |
+//+------------------------------------------------------------------+
+bool ValidateInputs()
+{
+    if(LotSize <= 0 || LotSize > 100)
+    {
+        Print("❌ Неверный размер лота: ", LotSize);
+        return false;
+    }
+    
+    if(RiskPercent <= 0 || RiskPercent > 20)
+    {
+        Print("❌ Риск должен быть от 0.1% до 20%: ", RiskPercent);
+        return false;
+    }
+    
+    if(MaxPositions <= 0 || MaxPositions > 10)
+    {
+        Print("❌ Максимальное количество позиций должно быть от 1 до 10: ", MaxPositions);
+        return false;
+    }
+    
+    if(StochKPeriod < 1 || StochKPeriod > 100)
+    {
+        Print("❌ Неверный период %K для Stochastic: ", StochKPeriod);
+        return false;
+    }
+    
+    if(MACDFastEMA >= MACDSlowEMA)
+    {
+        Print("❌ Быстрый EMA должен быть меньше медленного EMA");
+        return false;
+    }
+    
+    if(EnableTimeFilter)
+    {
+        if(ParseTimeString(SessionStartTime) == -1)
+        {
+            Print("❌ Неверный формат времени начала: ", SessionStartTime);
+            return false;
+        }
+        
+        if(ParseTimeString(SessionEndTime) == -1)
+        {
+            Print("❌ Неверный формат времени окончания: ", SessionEndTime);
+            return false;
+        }
+    }
+    
+    // Проверяем минимальные требования для торговли
+    double min_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+    double max_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+    double lot_step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+    
+    if(LotSize < min_lot)
+    {
+        Print("❌ Размер лота меньше минимального: ", LotSize, " < ", min_lot);
+        return false;
+    }
+    
+    if(LotSize > max_lot)
+    {
+        Print("❌ Размер лота больше максимального: ", LotSize, " > ", max_lot);
+        return false;
+    }
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Основная функция эксперта                                       |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+    // Проверяем новый бар
+    datetime current_time = iTime(_Symbol, PERIOD_CURRENT, 0);
+    bool is_new_bar = (current_time != g_last_bar_time);
+    
+    if(is_new_bar || g_first_run)
+    {
+        g_last_bar_time = current_time;
+        g_first_run = false;
+        
+        // Основная логика торговли
+        ProcessTradingLogic();
+    }
+    
+    // Управление открытыми позициями
+    ManageOpenPositions();
+}
+
+//+------------------------------------------------------------------+
+//| Основная торговая логика                                        |
+//+------------------------------------------------------------------+
+void ProcessTradingLogic()
+{
+    // Проверяем готовность данных
+    if(!WaitForIndicatorData())
+        return;
+    
+    // Фильтр времени торговли
+    if(EnableTimeFilter && !IsTimeToTrade())
+        return;
+    
+    // Поиск пиков
+    FindPeaks(g_stoch_handle, 0, g_stoch_max_peaks, g_stoch_min_peaks, true);
+    FindPeaks(g_macd_handle, 0, g_macd_max_peaks, g_macd_min_peaks, false);
+    
+    // Поиск торговых сигналов
+    TradeSignal signals[];
+    ArrayResize(signals, 0);
+    
+    if(StochBearish) FindTradingSignals(g_stoch_max_peaks, "StochBearish", true, false, signals);
+    if(StochBullish) FindTradingSignals(g_stoch_min_peaks, "StochBullish", false, false, signals);
+    if(MACDBearish) FindTradingSignals(g_macd_max_peaks, "MACDBearish", true, true, signals);
+    if(MACDBullish) FindTradingSignals(g_macd_min_peaks, "MACDBullish", false, true, signals);
+    
+    // Обработка найденных сигналов
+    ProcessTradingSignals(signals);
+}
+
+//+------------------------------------------------------------------+
+//| Ожидание готовности данных индикаторов                         |
+//+------------------------------------------------------------------+
+bool WaitForIndicatorData()
+{
+    double temp_buffer[];
+    
+    if(CopyBuffer(g_stoch_handle, 0, 0, 1, temp_buffer) <= 0) return false;
+    if(CopyBuffer(g_macd_handle, 0, 0, 1, temp_buffer) <= 0) return false;
+    if(CopyBuffer(g_atr_handle, 0, 0, 1, temp_buffer) <= 0) return false;
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Поиск пиков (копия из индикатора с упрощениями)                |
+//+------------------------------------------------------------------+
+void FindPeaks(int indicator_handle, int buffer_index, Peak &max_peaks[], Peak &min_peaks[], bool is_stochastic)
+{
+    double values[];
+    ArraySetAsSeries(values, true);
+    
+    int copied = CopyBuffer(indicator_handle, buffer_index, 0, NrLoad, values);
+    if(copied <= 0) return;
+    
+    ArrayResize(max_peaks, 0);
+    ArrayResize(min_peaks, 0);
+    
+    Peak temp_max_peaks[], temp_min_peaks[];
+    ArrayResize(temp_max_peaks, 0);
+    ArrayResize(temp_min_peaks, 0);
+    
+    int lookback = 2;
+    
+    // Определяем диапазон поиска в зависимости от режима
+    int start_bar, end_bar;
+    if(BacktestMode)
+    {
+        // В режиме тестирования анализируем исторические бары
+        start_bar = lookback;
+        end_bar = MathMin(copied - lookback, MaxBarsToAnalyze);
+        Print("ОТЛАДКА: Режим тестирования - анализ баров от ", start_bar, " до ", end_bar);
+    }
+    else
+    {
+        // В реальной торговле - только текущий бар и ближайшие
+        start_bar = 0;
+        end_bar = lookback + 1;
+    }
+    
+    for(int i = start_bar; i < end_bar; i++)
+    {
+        if(i >= copied) continue;
+        
+        double curr_val = values[i];
+        datetime bar_time = iTime(_Symbol, PERIOD_CURRENT, i);
+        
+        bool is_max = true;
+        bool is_min = true;
+        
+        // Проверяем окружающие бары
+        if(i == 0 && !BacktestMode)
+        {
+            // Для текущего бара в реальном времени сравниваем с предыдущими
+            for(int k = 1; k <= lookback && k < copied; k++)
+            {
+                if(curr_val <= values[k]) is_max = false;
+                if(curr_val >= values[k]) is_min = false;
+            }
+        }
+        else
+        {
+            // Для исторических баров или режима тестирования - обычная проверка с обеих сторон
+            for(int k = 1; k <= lookback; k++)
+            {
+                if((i - k >= 0 && curr_val <= values[i - k]) || 
+                   (i + k < copied && curr_val <= values[i + k]))
+                    is_max = false;
+                if((i - k >= 0 && curr_val >= values[i - k]) || 
+                   (i + k < copied && curr_val >= values[i + k]))
+                    is_min = false;
+            }
+        }
+        
+        // Фильтрация для Stochastic
+        if(is_stochastic)
+        {
+            if(is_max && curr_val < StochOverboughtLevel) is_max = false;
+            if(is_min && curr_val > StochOversoldLevel) is_min = false;
+        }
+        
+        if(is_max)
+        {
+            double price = iHigh(_Symbol, PERIOD_CURRENT, i);
+            Peak peak;
+            peak.index = i;
+            peak.value = curr_val;
+            peak.price = price;
+            peak.time = bar_time;
+            ArrayResize(temp_max_peaks, ArraySize(temp_max_peaks) + 1);
+            temp_max_peaks[ArraySize(temp_max_peaks) - 1] = peak;
+            
+            if(BacktestMode)
+                Print("ОТЛАДКА: Найден пик MAX на баре ", i, ", значение: ", curr_val, ", цена: ", price);
+        }
+        
+        if(is_min)
+        {
+            double price = iLow(_Symbol, PERIOD_CURRENT, i);
+            Peak peak;
+            peak.index = i;
+            peak.value = curr_val;
+            peak.price = price;
+            peak.time = bar_time;
+            ArrayResize(temp_min_peaks, ArraySize(temp_min_peaks) + 1);
+            temp_min_peaks[ArraySize(temp_min_peaks) - 1] = peak;
+            
+            if(BacktestMode)
+                Print("ОТЛАДКА: Найден пик MIN на баре ", i, ", значение: ", curr_val, ", цена: ", price);
+        }
+    }
+    
+    // Фильтрация по расстоянию
+    FilterPeaksByDistance(temp_max_peaks, max_peaks);
+    FilterPeaksByDistance(temp_min_peaks, min_peaks);
+    
+    if(BacktestMode)
+    {
+        Print("ОТЛАДКА: После фильтрации - MAX пиков: ", ArraySize(max_peaks), ", MIN пиков: ", ArraySize(min_peaks));
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Фильтрация пиков по расстоянию                                  |
+//+------------------------------------------------------------------+
+void FilterPeaksByDistance(Peak &source_peaks[], Peak &filtered_peaks[])
+{
+    int source_count = ArraySize(source_peaks);
+    if(source_count == 0) return;
+    
+    ArrayResize(filtered_peaks, 0);
+    
+    for(int i = 0; i < source_count; i++)
+    {
+        bool add_peak = true;
+        
+        for(int j = 0; j < ArraySize(filtered_peaks); j++)
+        {
+            if(MathAbs(source_peaks[i].index - filtered_peaks[j].index) < MinBarsBetweenPeaks)
+            {
+                if(MathAbs(source_peaks[i].value) > MathAbs(filtered_peaks[j].value))
+                {
+                    filtered_peaks[j] = source_peaks[i];
+                }
+                add_peak = false;
+                break;
+            }
+        }
+        
+        if(add_peak)
+        {
+            ArrayResize(filtered_peaks, ArraySize(filtered_peaks) + 1);
+            filtered_peaks[ArraySize(filtered_peaks) - 1] = source_peaks[i];
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Поиск торговых сигналов                                        |
+//+------------------------------------------------------------------+
+void FindTradingSignals(Peak &peaks[], string type, bool is_bearish, bool is_macd, TradeSignal &signals[])
+{
+    int peaks_count = ArraySize(peaks);
+    if(peaks_count < 2) 
+    {
+        if(BacktestMode)
+            Print("ОТЛАДКА: Недостаточно пиков для ", type, " - найдено: ", peaks_count);
+        return;
+    }
+    
+    if(BacktestMode)
+    {
+        // В режиме тестирования анализируем ВСЕ комбинации пиков
+        FindSignalsBacktest(peaks, type, is_bearish, is_macd, signals);
+    }
+    else
+    {
+        // В реальном времени - только с участием текущего бара
+        FindSignalsRealtime(peaks, type, is_bearish, is_macd, signals);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Поиск сигналов в режиме реального времени                      |
+//+------------------------------------------------------------------+
+void FindSignalsRealtime(Peak &peaks[], string type, bool is_bearish, bool is_macd, TradeSignal &signals[])
+{
+    int peaks_count = ArraySize(peaks);
+    
+    // Проверяем, есть ли пик на текущем баре
+    int current_bar_peak_idx = -1;
+    for(int i = 0; i < peaks_count; i++)
+    {
+        if(peaks[i].index == 0)
+        {
+            current_bar_peak_idx = i;
+            break;
+        }
+    }
+    
+    if(current_bar_peak_idx == -1) return;
+    
+    Peak current_peak = peaks[current_bar_peak_idx];
+    
+    // Ищем дивергенции с историческими пиками
+    for(int i = 0; i < peaks_count; i++)
+    {
+        if(i == current_bar_peak_idx) continue;
+        
+        Peak historical_peak = peaks[i];
+        
+        // Проверки расстояния и времени
+        if(historical_peak.index - current_peak.index < MinBarsBetweenPeaks) continue;
+        if(historical_peak.index > MaxBarsToAnalyze) continue;
+        
+        // Проверка дивергенции и создание сигнала
+        if(CheckDivergenceAndCreateSignal(current_peak, historical_peak, type, is_bearish, is_macd, signals))
+            break; // Берем только первую найденную дивергенцию
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Поиск сигналов в режиме тестирования                           |
+//+------------------------------------------------------------------+
+void FindSignalsBacktest(Peak &peaks[], string type, bool is_bearish, bool is_macd, TradeSignal &signals[])
+{
+    int peaks_count = ArraySize(peaks);
+    
+    // В режиме тестирования анализируем все возможные пары пиков
+    for(int i = 0; i < peaks_count - 1; i++)
+    {
+        for(int j = i + 1; j < peaks_count; j++)
+        {
+            Peak recent_peak = peaks[i];    // Более свежий пик (меньший индекс)
+            Peak older_peak = peaks[j];     // Более старый пик (больший индекс)
+            
+            // Проверки расстояния и времени
+            if(older_peak.index - recent_peak.index < MinBarsBetweenPeaks) continue;
+            if(older_peak.index > MaxBarsToAnalyze) continue;
+            
+            // Проверка дивергенции и создание сигнала
+            CheckDivergenceAndCreateSignal(recent_peak, older_peak, type, is_bearish, is_macd, signals);
+        }
+    }
+    
+    if(BacktestMode && ArraySize(signals) > 0)
+    {
+        Print("ОТЛАДКА: Найдено сигналов ", type, ": ", ArraySize(signals));
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Проверка дивергенции и создание сигнала                        |
+//+------------------------------------------------------------------+
+bool CheckDivergenceAndCreateSignal(const Peak &recent_peak, const Peak &older_peak, string type, bool is_bearish, bool is_macd, TradeSignal &signals[])
+{
+    // Проверка условий дивергенции
+    bool divergence_found = false;
+    double strength = 0.0;
+    
+    if(is_bearish)
+    {
+        bool price_grows = older_peak.price < recent_peak.price;
+        bool indicator_falls = older_peak.value > recent_peak.value;
+        
+        if(price_grows && indicator_falls)
+        {
+            if(is_macd)
+            {
+                double macd_diff = MathAbs(older_peak.value - recent_peak.value);
+                if(macd_diff >= MACDPickDif * g_point)
+                {
+                    divergence_found = true;
+                    strength = macd_diff + (recent_peak.price - older_peak.price) / g_point;
+                }
+            }
+            else
+            {
+                divergence_found = true;
+                strength = (older_peak.value - recent_peak.value) + (recent_peak.price - older_peak.price) / g_point;
+            }
+        }
+    }
+    else
+    {
+        bool price_falls = older_peak.price > recent_peak.price;
+        bool indicator_grows = older_peak.value < recent_peak.value;
+        
+        if(price_falls && indicator_grows)
+        {
+            if(is_macd)
+            {
+                double macd_diff = MathAbs(older_peak.value - recent_peak.value);
+                if(macd_diff >= MACDPickDif * g_point)
+                {
+                    divergence_found = true;
+                    strength = macd_diff + (older_peak.price - recent_peak.price) / g_point;
+                }
+            }
+            else
+            {
+                divergence_found = true;
+                strength = (recent_peak.value - older_peak.value) + (older_peak.price - recent_peak.price) / g_point;
+            }
+        }
+    }
+    
+    // Если дивергенция найдена, создаем торговый сигнал
+    if(divergence_found)
+    {
+        // Фильтр силы сигнала
+        if(EnableStrengthFilter && strength < MinSignalStrength)
+        {
+            if(BacktestMode)
+                Print("ОТЛАДКА: Сигнал отклонен - слабая сила: ", strength, " < ", MinSignalStrength);
+            return false;
+        }
+        
+        TradeSignal signal;
+        signal.type = type;
+        signal.is_bearish = is_bearish;
+        signal.entry_price = recent_peak.price;  // Используем цену более свежего пика
+        signal.strength = strength;
+        signal.signal_time = recent_peak.time;
+        signal.signal_bar = recent_peak.index;
+        
+        // Расчет TP/SL
+        CalculateTPSL(signal);
+        
+        // Добавляем сигнал в массив
+        int idx = ArraySize(signals);
+        ArrayResize(signals, idx + 1);
+        signals[idx] = signal;
+        
+        g_stats.total_signals++;
+        
+        Print("📈 ТОРГОВЫЙ СИГНАЛ: ", type, " | Сила: ", DoubleToString(strength, 2), 
+              " | Цена: ", DoubleToString(signal.entry_price, _Digits),
+              " | Бар: ", signal.signal_bar);
+        
+        if(BacktestMode)
+        {
+            Print("ОТЛАДКА: Создан сигнал - старый пик (бар ", older_peak.index, ", цена ", older_peak.price, ", значение ", older_peak.value, 
+                  ") vs новый пик (бар ", recent_peak.index, ", цена ", recent_peak.price, ", значение ", recent_peak.value, ")");
+        }
+        
+        return true;
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Расчет TP и SL уровней                                          |
+//+------------------------------------------------------------------+
+void CalculateTPSL(TradeSignal &signal)
+{
+    // Получаем текущие цены (НЕ цену пика!)
+    double current_bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    double current_ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+    double current_price = signal.is_bearish ? current_bid : current_ask;
+    
+    // Получаем минимальные дистанции
+    int stops_level = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+    double min_distance = stops_level * g_point;
+    
+    if(min_distance <= 0)
+        min_distance = 50 * g_point;
+    
+    // Используем множитель для безопасности
+    min_distance = min_distance * MinStopDistanceMultiplier;
+    
+    double tp_distance, sl_distance;
+    
+    if(UseFixedTPSL)
+    {
+        // Фиксированные TP/SL в пунктах
+        tp_distance = FixedTPPoints * g_point;
+        sl_distance = FixedSLPoints * g_point;
+    }
+    else
+    {
+        // TP/SL на основе ATR
+        double atr[];
+        ArraySetAsSeries(atr, true);
+        
+        if(CopyBuffer(g_atr_handle, 0, 0, 1, atr) > 0)
+        {
+            double atr_value = atr[0];
+            tp_distance = ATRMultiplierTP * atr_value;
+            sl_distance = ATRMultiplierSL * atr_value;
+        }
+        else
+        {
+            // Резервные значения
+            tp_distance = 500 * g_point; // 50 пунктов
+            sl_distance = 250 * g_point; // 25 пунктов
+        }
+    }
+    
+    // Проверяем минимальные дистанции
+    tp_distance = MathMax(tp_distance, min_distance);
+    sl_distance = MathMax(sl_distance, min_distance);
+    
+    // Рассчитываем TP/SL от ТЕКУЩЕЙ цены
+    if(signal.is_bearish)
+    {
+        signal.tp_price = current_price - tp_distance;
+        signal.sl_price = current_price + sl_distance;
+        signal.entry_price = current_price; // Обновляем цену входа
+    }
+    else
+    {
+        signal.tp_price = current_price + tp_distance;
+        signal.sl_price = current_price - sl_distance;
+        signal.entry_price = current_price; // Обновляем цену входа
+    }
+    
+    // Нормализуем цены
+    signal.entry_price = NormalizeDouble(signal.entry_price, _Digits);
+    signal.tp_price = NormalizeDouble(signal.tp_price, _Digits);
+    signal.sl_price = NormalizeDouble(signal.sl_price, _Digits);
+    
+    if(BacktestMode)
+    {
+        Print("ОТЛАДКА TP/SL: Текущая цена: ", DoubleToString(current_price, _Digits),
+              " | TP: ", DoubleToString(signal.tp_price, _Digits),
+              " | SL: ", DoubleToString(signal.sl_price, _Digits),
+              " | Мин.дистанция: ", DoubleToString(min_distance, _Digits));
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Валидация уровней TP/SL                                        |
+//+------------------------------------------------------------------+
+bool ValidateTPSL(double price, double tp, double sl, bool is_buy)
+{
+    // Получаем минимальные дистанции
+    int stops_level = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+    double min_distance = stops_level * g_point;
+    
+    if(min_distance <= 0)
+        min_distance = 50 * g_point;
+    
+    // Проверяем направление уровней
+    if(is_buy)
+    {
+        // Для BUY: SL должен быть ниже цены, TP - выше
+        if(sl > 0 && sl >= price)
+        {
+            Print("❌ Ошибка SL для BUY: ", sl, " >= ", price);
+            return false;
+        }
+        if(tp > 0 && tp <= price)
+        {
+            Print("❌ Ошибка TP для BUY: ", tp, " <= ", price);
+            return false;
+        }
+        
+        // Проверяем минимальные дистанции
+        if(sl > 0 && (price - sl) < min_distance)
+        {
+            Print("❌ SL слишком близко для BUY: ", (price - sl), " < ", min_distance);
+            return false;
+        }
+        if(tp > 0 && (tp - price) < min_distance)
+        {
+            Print("❌ TP слишком близко для BUY: ", (tp - price), " < ", min_distance);
+            return false;
+        }
+    }
+    else
+    {
+        // Для SELL: SL должен быть выше цены, TP - ниже
+        if(sl > 0 && sl <= price)
+        {
+            Print("❌ Ошибка SL для SELL: ", sl, " <= ", price);
+            return false;
+        }
+        if(tp > 0 && tp >= price)
+        {
+            Print("❌ Ошибка TP для SELL: ", tp, " >= ", price);
+            return false;
+        }
+        
+        // Проверяем минимальные дистанции
+        if(sl > 0 && (sl - price) < min_distance)
+        {
+            Print("❌ SL слишком близко для SELL: ", (sl - price), " < ", min_distance);
+            return false;
+        }
+        if(tp > 0 && (price - tp) < min_distance)
+        {
+            Print("❌ TP слишком близко для SELL: ", (price - tp), " < ", min_distance);
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Обработка торговых сигналов                                    |
+//+------------------------------------------------------------------+
+void ProcessTradingSignals(TradeSignal &signals[])
+{
+    if(!EnableTrading)
+    {
+        // Только уведомления, без торговли
+        for(int i = 0; i < ArraySize(signals); i++)
+        {
+            SendTradingAlert("СИГНАЛ (ТОРГОВЛЯ ОТКЛЮЧЕНА)", signals[i]);
+        }
+        return;
+    }
+    
+    // Проверяем количество открытых позиций
+    int current_positions = CountPositions();
+    if(current_positions >= MaxPositions)
+    {
+        Print("⚠️ Достигнуто максимальное количество позиций: ", current_positions);
+        return;
+    }
+    
+    // Обрабатываем сигналы по силе (от сильных к слабым)
+    SortSignalsByStrength(signals);
+    
+    for(int i = 0; i < ArraySize(signals); i++)
+    {
+        TradeSignal signal = signals[i];
+        
+        // Проверяем, можно ли открыть позицию в этом направлении
+        if(!AllowOpposite && HasOppositePosition(signal.is_bearish))
+        {
+            Print("⚠️ Пропуск сигнала - есть противоположная позиция");
+            continue;
+        }
+        
+        // Рассчитываем размер лота
+        double lot_size = CalculateLotSize(signal);
+        if(lot_size <= 0)
+        {
+            Print("❌ Ошибка расчета размера лота");
+            continue;
+        }
+        
+        // Открываем позицию
+        if(OpenPosition(signal, lot_size))
+        {
+            g_stats.total_trades++;
+            g_stats.last_trade_time = TimeCurrent();
+            
+            Print("✅ Позиция открыта: ", (signal.is_bearish ? "SELL" : "BUY"), 
+                  " | Лот: ", DoubleToString(lot_size, 2),
+                  " | Цена: ", DoubleToString(signal.entry_price, _Digits));
+            
+            if(AlertOnEntry)
+                SendTradingAlert("ВХОД В ПОЗИЦИЮ", signal);
+            
+            // Открываем только одну позицию за раз
+            break;
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Подсчет текущих позиций                                        |
+//+------------------------------------------------------------------+
+int CountPositions()
+{
+    int count = 0;
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        if(m_position.SelectByIndex(i))
+        {
+            if(m_position.Symbol() == _Symbol && m_position.Magic() == MagicNumber)
+                count++;
+        }
+    }
+    return count;
+}
+
+//+------------------------------------------------------------------+
+//| Проверка наличия противоположной позиции                       |
+//+------------------------------------------------------------------+
+bool HasOppositePosition(bool is_bearish_signal)
+{
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        if(m_position.SelectByIndex(i))
+        {
+            if(m_position.Symbol() == _Symbol && m_position.Magic() == MagicNumber)
+            {
+                ENUM_POSITION_TYPE pos_type = m_position.PositionType();
+                
+                if(is_bearish_signal && pos_type == POSITION_TYPE_BUY)
+                    return true;
+                if(!is_bearish_signal && pos_type == POSITION_TYPE_SELL)
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Расчет размера лота                                            |
+//+------------------------------------------------------------------+
+double CalculateLotSize(const TradeSignal &signal)
+{
+    double calculated_lot = LotSize;
+    
+    if(UseAutoLotSize)
+    {
+        double account_balance = AccountInfoDouble(ACCOUNT_BALANCE);
+        double risk_amount = account_balance * RiskPercent / 100.0;
+        
+        double sl_distance = MathAbs(signal.entry_price - signal.sl_price);
+        if(sl_distance > 0)
+        {
+            double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+            double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+            
+            if(tick_value > 0 && tick_size > 0)
+            {
+                double loss_per_lot = (sl_distance / tick_size) * tick_value;
+                if(loss_per_lot > 0)
+                {
+                    calculated_lot = risk_amount / loss_per_lot;
+                }
+            }
+        }
+    }
+    
+    // Нормализация лота
+    double min_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+    double max_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+    double lot_step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+    
+    calculated_lot = MathMax(calculated_lot, min_lot);
+    calculated_lot = MathMin(calculated_lot, max_lot);
+    calculated_lot = NormalizeDouble(calculated_lot / lot_step, 0) * lot_step;
+    
+    return calculated_lot;
+}
+
+//+------------------------------------------------------------------+
+//| Открытие позиции                                               |
+//+------------------------------------------------------------------+
+bool OpenPosition(const TradeSignal &signal, double lot_size)
+{
+    // Получаем текущие цены
+    double current_bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    double current_ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+    double current_price = signal.is_bearish ? current_bid : current_ask;
+    
+    // Пересчитываем TP/SL от текущей цены (на случай изменения)
+    TradeSignal updated_signal = signal;
+    CalculateTPSL(updated_signal);
+    
+    // Валидируем уровни
+    if(!ValidateTPSL(updated_signal.entry_price, updated_signal.tp_price, updated_signal.sl_price, !signal.is_bearish))
+    {
+        Print("❌ Невалидные уровни TP/SL для сигнала ", signal.type);
+        return false;
+    }
+    
+    string comment = StringFormat("DivEA_%s_%.1f", signal.type, signal.strength);
+    
+    Print("🔄 Открытие позиции: ", (signal.is_bearish ? "SELL" : "BUY"),
+          " | Цена: ", DoubleToString(updated_signal.entry_price, _Digits),
+          " | SL: ", DoubleToString(updated_signal.sl_price, _Digits),
+          " | TP: ", DoubleToString(updated_signal.tp_price, _Digits));
+    
+    bool result = false;
+    if(signal.is_bearish)
+    {
+        result = m_trade.Sell(lot_size, _Symbol, 0, updated_signal.sl_price, updated_signal.tp_price, comment);
+    }
+    else
+    {
+        result = m_trade.Buy(lot_size, _Symbol, 0, updated_signal.sl_price, updated_signal.tp_price, comment);
+    }
+    
+    if(!result)
+    {
+        Print("❌ Ошибка открытия позиции: ", m_trade.ResultRetcode(), " - ", m_trade.ResultRetcodeDescription());
+        
+        // Дополнительная диагностика
+        Print("🔍 Диагностика: Bid=", DoubleToString(current_bid, _Digits), 
+              " Ask=", DoubleToString(current_ask, _Digits),
+              " Спред=", DoubleToString(current_ask - current_bid, _Digits));
+        
+        return false;
+    }
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Управление открытыми позициями                                 |
+//+------------------------------------------------------------------+
+void ManageOpenPositions()
+{
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        if(m_position.SelectByIndex(i))
+        {
+            if(m_position.Symbol() == _Symbol && m_position.Magic() == MagicNumber)
+            {
+                // Трейлинг стоп
+                if(EnableTrailing)
+                {
+                    TrailingStop(m_position.Ticket());
+                }
+                
+                // Проверка времени торговли для закрытия
+                if(EnableTimeFilter && !IsTimeToTrade())
+                {
+                    ClosePosition(m_position.Ticket(), "Окончание торговой сессии");
+                }
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Трейлинг стоп                                                  |
+//+------------------------------------------------------------------+
+void TrailingStop(ulong ticket)
+{
+    if(!m_position.SelectByTicket(ticket))
+        return;
+    
+    double current_price, stop_loss, new_sl;
+    ENUM_POSITION_TYPE pos_type = m_position.PositionType();
+    
+    if(pos_type == POSITION_TYPE_BUY)
+    {
+        current_price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+        stop_loss = m_position.StopLoss();
+        
+        double profit_points = (current_price - m_position.PriceOpen()) / g_point / 10;
+        
+        if(profit_points >= TrailingStart)
+        {
+            new_sl = current_price - TrailingStop * g_point * 10;
+            
+            if(new_sl > stop_loss + TrailingStep * g_point * 10)
+            {
+                new_sl = NormalizeDouble(new_sl, _Digits);
+                m_trade.PositionModify(ticket, new_sl, m_position.TakeProfit());
+                Print("📈 Трейлинг BUY: ", DoubleToString(new_sl, _Digits));
+            }
+        }
+    }
+    else if(pos_type == POSITION_TYPE_SELL)
+    {
+        current_price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+        stop_loss = m_position.StopLoss();
+        
+        double profit_points = (m_position.PriceOpen() - current_price) / g_point / 10;
+        
+        if(profit_points >= TrailingStart)
+        {
+            new_sl = current_price + TrailingStop * g_point * 10;
+            
+            if(new_sl < stop_loss - TrailingStep * g_point * 10 || stop_loss == 0)
+            {
+                new_sl = NormalizeDouble(new_sl, _Digits);
+                m_trade.PositionModify(ticket, new_sl, m_position.TakeProfit());
+                Print("📉 Трейлинг SELL: ", DoubleToString(new_sl, _Digits));
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Закрытие позиции                                               |
+//+------------------------------------------------------------------+
+void ClosePosition(ulong ticket, string reason)
+{
+    if(m_position.SelectByTicket(ticket))
+    {
+        double profit = m_position.Profit();
+        bool result = m_trade.PositionClose(ticket);
+        
+        if(result)
+        {
+            Print("✅ Позиция закрыта: ", reason, " | Прибыль: ", DoubleToString(profit, 2));
+            
+            // Обновляем статистику
+            if(profit > 0)
+                g_stats.winning_trades++;
+            else
+                g_stats.losing_trades++;
+            
+            g_stats.total_profit += profit;
+            
+            if(AlertOnClose)
+            {
+                string alert_msg = StringFormat("ПОЗИЦИЯ ЗАКРЫТА: %s | Прибыль: %.2f", reason, profit);
+                SendAlert(alert_msg);
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Сортировка сигналов по силе                                    |
+//+------------------------------------------------------------------+
+void SortSignalsByStrength(TradeSignal &signals[])
+{
+    int size = ArraySize(signals);
+    if(size < 2) return;
+    
+    for(int i = 0; i < size - 1; i++)
+    {
+        for(int j = 0; j < size - 1 - i; j++)
+        {
+            if(signals[j].strength < signals[j + 1].strength)
+            {
+                TradeSignal temp = signals[j];
+                signals[j] = signals[j + 1];
+                signals[j + 1] = temp;
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Проверка времени торговли                                      |
+//+------------------------------------------------------------------+
+bool IsTimeToTrade()
+{
+    if(!EnableTimeFilter) return true;
+    
+    MqlDateTime time_struct;
+    TimeToStruct(TimeCurrent(), time_struct);
+    
+    // Проверка дня недели
+    switch(time_struct.day_of_week)
+    {
+        case 1: if(!TradeMonday) return false; break;
+        case 2: if(!TradeTuesday) return false; break;
+        case 3: if(!TradeWednesday) return false; break;
+        case 4: if(!TradeThursday) return false; break;
+        case 5: if(!TradeFriday) return false; break;
+        default: return false; // Выходные
+    }
+    
+    // Проверка времени сессии
+    int session_start = ParseTimeString(SessionStartTime);
+    int session_end = ParseTimeString(SessionEndTime);
+    int current_time = time_struct.hour * 60 + time_struct.min;
+    
+    if(session_start == -1 || session_end == -1)
+        return true;
+    
+    if(session_start <= session_end)
+    {
+        return (current_time >= session_start && current_time <= session_end);
+    }
+    else
+    {
+        return (current_time >= session_start || current_time <= session_end);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Парсинг строки времени                                         |
+//+------------------------------------------------------------------+
+int ParseTimeString(string time_str)
+{
+    int colon_pos = StringFind(time_str, ":");
+    if(colon_pos == -1) return -1;
+    
+    int hours = (int)StringToInteger(StringSubstr(time_str, 0, colon_pos));
+    int minutes = (int)StringToInteger(StringSubstr(time_str, colon_pos + 1));
+    
+    if(hours < 0 || hours > 23 || minutes < 0 || minutes > 59)
+        return -1;
+    
+    return hours * 60 + minutes;
+}
+
+//+------------------------------------------------------------------+
+//| Отправка торгового уведомления                                 |
+//+------------------------------------------------------------------+
+void SendTradingAlert(string title, const TradeSignal &signal)
+{
+    if(!EnableAlerts) return;
+    
+    string direction = signal.is_bearish ? "SELL 📉" : "BUY 📈";
+    string message = StringFormat("%s\n🎯 %s %s\n💪 Сила: %.2f\n💰 Цена: %s\n🟢 TP: %s\n🔴 SL: %s\n📊 Символ: %s",
+                                  title, direction, signal.type, signal.strength,
+                                  DoubleToString(signal.entry_price, _Digits),
+                                  DoubleToString(signal.tp_price, _Digits),
+                                  DoubleToString(signal.sl_price, _Digits),
+                                  _Symbol);
+    
+    SendAlert(message);
+}
+
+//+------------------------------------------------------------------+
+//| Универсальная отправка уведомлений                             |
+//+------------------------------------------------------------------+
+void SendAlert(string message)
+{
+    if(EnableAlerts)
+        Alert(message);
+    
+    if(EnableEmailAlerts)
+        SendMail("DivergenceTrader EA - " + _Symbol, message);
+    
+    if(EnablePushAlerts)
+        SendNotification(message);
+}
+
+//+------------------------------------------------------------------+
+//| Деинициализация эксперта                                       |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+    Print("=== Деинициализация DivergenceTrader EA ===");
+    
+    // Статистика
+    double win_rate = (g_stats.total_trades > 0) ? (double)g_stats.winning_trades / g_stats.total_trades * 100 : 0;
+    
+    Print("📊 СТАТИСТИКА ТОРГОВЛИ:");
+    Print("📈 Всего сигналов: ", g_stats.total_signals);
+    Print("💼 Всего сделок: ", g_stats.total_trades);
+    Print("✅ Прибыльных: ", g_stats.winning_trades, " (", DoubleToString(win_rate, 1), "%)");
+    Print("❌ Убыточных: ", g_stats.losing_trades);
+    Print("💰 Общая прибыль: ", DoubleToString(g_stats.total_profit, 2));
+    
+    // Освобождение ресурсов
+    if(g_stoch_handle != INVALID_HANDLE)
+        IndicatorRelease(g_stoch_handle);
+    if(g_macd_handle != INVALID_HANDLE)
+        IndicatorRelease(g_macd_handle);
+    if(g_atr_handle != INVALID_HANDLE)
+        IndicatorRelease(g_atr_handle);
+        
+    Print("✅ Деинициализация завершена");
+} 
