@@ -41,6 +41,11 @@ input color DoubleText = clrYellow;      // Цвет текста двойной
 input double MACDPickDif = 2.0;          // Минимальная разница для пиков MACD
 input int NrLoad = 100;                   // Количество баров для анализа
 
+// Добавляем новые входные параметры для ATR
+input int ATRPeriod = 14;                 // Период ATR
+input double ATRMultiplierTP = 2.0;       // Множитель ATR для TP
+input double ATRMultiplierSL = 1.0;       // Множитель ATR для SL
+
 // Глобальные переменные
 int g_stoch_handle;                      // Хендл индикатора Stochastic
 int g_macd_handle;                       // Хендл индикатора MACD
@@ -128,7 +133,7 @@ int OnInit()
     }
 
     // Инициализация ATR
-    g_atr_handle = iATR(_Symbol, PERIOD_CURRENT, 14);
+    g_atr_handle = iATR(_Symbol, PERIOD_CURRENT, ATRPeriod);
     if(g_atr_handle == INVALID_HANDLE)
     {
         Print("Ошибка создания индикатора ATR: ", GetLastError());
@@ -558,13 +563,13 @@ void DrawDivergenceLine(int idx1, int idx2, double price1, double price2,
         double tp, sl;
         if(is_bullish)
         {
-            tp = close_price + 2 * atr_value;
-            sl = close_price - atr_value;
+            tp = close_price + ATRMultiplierTP * atr_value;
+            sl = close_price - ATRMultiplierSL * atr_value;
         }
         else
         {
-            tp = close_price - 2 * atr_value;
-            sl = close_price + atr_value;
+            tp = close_price - ATRMultiplierTP * atr_value;
+            sl = close_price + ATRMultiplierSL * atr_value;
         }
         Print("Дивергенция ", type, " на баре ", idx1, ": TP = ", tp, ", SL = ", sl);
         
