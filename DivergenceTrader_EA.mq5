@@ -93,7 +93,8 @@ input double TrailingStep = 50;             // Минимальный шаг (п
 
 //--- Настройки времени торговли
 input group "=== Фильтр времени торговли ==="
-input bool EnableTimeFilter = true;         // Включить фильтр времени
+input bool EnableTimeFilter = true;         // Включить фильтр времени для открытия позиций
+input bool CloseAtSessionEnd = false;       // Закрывать позиции в конце торговой сессии
 input string SessionStartTime = "08:00";    // Время начала торговой сессии
 input string SessionEndTime = "17:00";      // Время окончания торговой сессии
 input bool TradeMonday = true;              // Торговать в понедельник
@@ -208,7 +209,8 @@ int OnInit()
     Print("📊 Торговля: ", (EnableTrading ? "ВКЛЮЧЕНА" : "ОТКЛЮЧЕНА"));
     Print("💰 Размер лота: ", (UseAutoLotSize ? "Авто (" + DoubleToString(RiskPercent, 1) + "%)" : DoubleToString(LotSize, 2)));
     Print("🎯 Максимум позиций: ", MaxPositions);
-    Print("🕒 Фильтр времени: ", (EnableTimeFilter ? SessionStartTime + " - " + SessionEndTime : "ОТКЛЮЧЕН"));
+    Print("🕒 Фильтр времени открытия: ", (EnableTimeFilter ? SessionStartTime + " - " + SessionEndTime : "ОТКЛЮЧЕН"));
+    Print("🔒 Закрытие в конце сессии: ", (CloseAtSessionEnd ? "ВКЛЮЧЕНО" : "ОТКЛЮЧЕНО"));
     
     return INIT_SUCCEEDED;
 }
@@ -259,6 +261,22 @@ bool ValidateInputs()
         if(ParseTimeString(SessionEndTime) == -1)
         {
             Print("❌ Неверный формат времени окончания: ", SessionEndTime);
+            return false;
+        }
+    }
+    
+    // Проверяем настройки времени для автозакрытия позиций
+    if(CloseAtSessionEnd)
+    {
+        if(ParseTimeString(SessionStartTime) == -1)
+        {
+            Print("❌ Неверный формат времени начала (требуется для автозакрытия): ", SessionStartTime);
+            return false;
+        }
+        
+        if(ParseTimeString(SessionEndTime) == -1)
+        {
+            Print("❌ Неверный формат времени окончания (требуется для автозакрытия): ", SessionEndTime);
             return false;
         }
     }
@@ -1061,10 +1079,10 @@ void ManageOpenPositions()
                     TrailingStop(m_position.Ticket());
                 }
                 
-                // Проверка времени торговли для закрытия
-                if(EnableTimeFilter && !IsTimeToTrade())
+                // Принудительное закрытие позиций в конце торговой сессии
+                if(CloseAtSessionEnd && !IsTimeToTrade())
                 {
-                    ClosePosition(m_position.Ticket(), "Окончание торговой сессии");
+                    ClosePosition(m_position.Ticket(), "Принудительное закрытие - конец сессии");
                 }
             }
         }
