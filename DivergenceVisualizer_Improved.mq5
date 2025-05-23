@@ -82,6 +82,14 @@ input bool EnableAlerts = true;             // Включить алерты
 input bool EnableEmailAlerts = false;       // Включить email-алерты
 input bool EnablePushAlerts = false;        // Включить push-алерты
 
+//--- Настройки времени торговой сессии
+input group "Фильтр по времени сессии"
+input bool EnableTimeFilter = true;         // Включить фильтр по времени
+input string SessionStartTime = "08:00";    // Время начала сессии (по серверу)
+input string SessionEndTime = "17:00";      // Время окончания сессии (по серверу)
+input bool ShowOnlySessionSignals = true;   // Показывать только сигналы в рамках сессии
+input string TimeZoneInfo = "Установите время по серверу MT5"; // Информация о часовом поясе
+
 //--- Глобальные переменные
 int g_stoch_handle;                         // Хендл индикатора Stochastic
 int g_macd_handle;                          // Хендл индикатора MACD
@@ -189,6 +197,24 @@ bool ValidateInputs()
     {
         Print("Максимальное количество баров для анализа должно быть от 10 до ", NrLoad);
         return false;
+    }
+    
+    // Валидация времени сессии
+    if(EnableTimeFilter)
+    {
+        if(ParseTimeString(SessionStartTime) == -1)
+        {
+            Print("Неверный формат времени начала сессии: ", SessionStartTime, ". Используйте формат HH:MM");
+            return false;
+        }
+        
+        if(ParseTimeString(SessionEndTime) == -1)
+        {
+            Print("Неверный формат времени окончания сессии: ", SessionEndTime, ". Используйте формат HH:MM");
+            return false;
+        }
+        
+        Print("Фильтр времени активен: ", SessionStartTime, " - ", SessionEndTime, " (время сервера)");
     }
     
     return true;
@@ -431,6 +457,13 @@ void FindDivergences(Peak &peaks[], string type, bool is_bearish, bool is_macd)
             if(peaks[j].index - peaks[i].index < MinBarsBetweenPeaks) continue;
             if(peaks[i].index > MaxBarsToAnalyze) continue; // Слишком старые пики
             
+            // Фильтр по времени торговой сессии
+            if(EnableTimeFilter && ShowOnlySessionSignals)
+            {
+                if(!IsTimeInSession(peaks[i].time) || !IsTimeInSession(peaks[j].time))
+                    continue; // Пропускаем дивергенцию, если хотя бы один пик вне сессии
+            }
+            
             // Проверка условий дивергенции
             bool divergence_found = false;
             double strength = 0.0;
@@ -569,6 +602,21 @@ void DrawDivergence(const Peak &peak1, const Peak &peak2, string type, bool is_b
             div_text += " STOCH";
         else
             div_text += " MACD";
+        
+        // Добавляем время и статус сессии
+        MqlDateTime time_struct;
+        TimeToStruct(peak1.time, time_struct);
+        string time_str = StringFormat("%02d:%02d", time_struct.hour, time_struct.min);
+        
+        if(EnableTimeFilter)
+        {
+            string session_mark = IsTimeInSession(peak1.time) ? "✓" : "✗";
+            div_text += StringFormat(" [%s %s]", time_str, session_mark);
+        }
+        else
+        {
+            div_text += StringFormat(" [%s]", time_str);
+        }
             
         ObjectSetString(0, text_name, OBJPROP_TEXT, div_text);
         ObjectSetInteger(0, text_name, OBJPROP_COLOR, line_color);
@@ -730,8 +778,15 @@ void SendDivergenceAlert(string type, int bar_index)
 {
     if(!EnableAlerts) return;
     
-    string message = StringFormat("Дивергенция %s обнаружена на баре %d (%s)", 
-                                  type, bar_index, _Symbol);
+    datetime bar_time = iTime(_Symbol, PERIOD_CURRENT, bar_index);
+    MqlDateTime time_struct;
+    TimeToStruct(bar_time, time_struct);
+    
+    string time_str = StringFormat("%02d:%02d", time_struct.hour, time_struct.min);
+    string session_status = IsTimeInSession(bar_time) ? "В СЕССИИ" : "ВНЕ СЕССИИ";
+    
+    string message = StringFormat("🎯 Дивергенция %s обнаружена!\n⏰ Время: %s (%s)\n📊 Символ: %s\n📍 Бар: %d", 
+                                  type, time_str, session_status, _Symbol, bar_index);
     
     Alert(message);
     
@@ -774,4 +829,56 @@ void OnDeinit(const int reason)
         IndicatorRelease(g_macd_handle);
     if(g_atr_handle != INVALID_HANDLE)
         IndicatorRelease(g_atr_handle);
+}
+
+//+------------------------------------------------------------------+
+//| Проверка, попадает ли время в торговую сессию                   |
+//+------------------------------------------------------------------+
+bool IsTimeInSession(datetime check_time)
+{
+    if(!EnableTimeFilter) return true;
+    
+    MqlDateTime time_struct;
+    TimeToStruct(check_time, time_struct);
+    
+    int session_start_minutes = ParseTimeString(SessionStartTime);
+    int session_end_minutes = ParseTimeString(SessionEndTime);
+    int current_minutes = time_struct.hour * 60 + time_struct.min;
+    
+    if(session_start_minutes == -1 || session_end_minutes == -1)
+        return true; // Если ошибка парсинга, не фильтруем
+    
+    // Проверяем, не переходит ли сессия через полночь
+    if(session_start_minutes <= session_end_minutes)
+    {
+        // Обычная сессия в рамках одного дня
+        return (current_minutes >= session_start_minutes && current_minutes <= session_end_minutes);
+    }
+    else
+    {
+        // Сессия переходит через полночь (например, 22:00-06:00)
+        return (current_minutes >= session_start_minutes || current_minutes <= session_end_minutes);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Парсинг строки времени в минуты от начала дня                   |
+//+------------------------------------------------------------------+
+int ParseTimeString(string time_str)
+{
+    // Ожидаем формат "HH:MM"
+    int colon_pos = StringFind(time_str, ":");
+    if(colon_pos == -1 || colon_pos == 0 || colon_pos == StringLen(time_str) - 1)
+        return -1;
+    
+    string hour_str = StringSubstr(time_str, 0, colon_pos);
+    string min_str = StringSubstr(time_str, colon_pos + 1);
+    
+    int hours = (int)StringToInteger(hour_str);
+    int minutes = (int)StringToInteger(min_str);
+    
+    if(hours < 0 || hours > 23 || minutes < 0 || minutes > 59)
+        return -1;
+    
+    return hours * 60 + minutes;
 } 
