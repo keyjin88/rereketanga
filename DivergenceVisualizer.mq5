@@ -55,6 +55,7 @@ int g_bearish_divs[][4];                 // Массив для хранения
 int g_bullish_divs[][4];                 // Массив для хранения бычьих дивергенций
 int g_bearish_count = 0;                 // Счетчик медвежьих дивергенций
 int g_bullish_count = 0;                 // Счетчик бычьих дивергенций
+int g_atr_handle; // Хендл индикатора ATR
 
 //+------------------------------------------------------------------+
 //| Custom indicator initialization function                         |
@@ -126,6 +127,16 @@ int OnInit()
         }
     }
 
+    // Инициализация ATR
+    g_atr_handle = iATR(_Symbol, PERIOD_CURRENT, 14);
+    if(g_atr_handle == INVALID_HANDLE)
+    {
+        Print("Ошибка создания индикатора ATR: ", GetLastError());
+        IndicatorRelease(g_stoch_handle);
+        IndicatorRelease(g_macd_handle);
+        return(INIT_FAILED);
+    }
+
     return(INIT_SUCCEEDED);
 }
 
@@ -184,6 +195,7 @@ void OnDeinit(const int reason)
     // Освобождение хендлов индикаторов
     IndicatorRelease(g_stoch_handle);
     IndicatorRelease(g_macd_handle);
+    IndicatorRelease(g_atr_handle);
 }
 
 //+------------------------------------------------------------------+
@@ -521,58 +533,6 @@ void DrawDivergenceLine(int idx1, int idx2, double price1, double price2,
     // Определяем, является ли дивергенция бычьей
     bool is_bullish = (StringFind(type, "Bullish") >= 0);
     
-    // Линия на ценовом графике
-    if(!ObjectCreate(0, name + "_price", OBJ_TREND, 0, time1, price1, time2, price2))
-    {
-        Print("Ошибка создания линии цены: ", GetLastError());
-        return;
-    }
-    
-    ObjectSetInteger(0, name + "_price", OBJPROP_COLOR, clr);
-    ObjectSetInteger(0, name + "_price", OBJPROP_STYLE, style);
-    ObjectSetInteger(0, name + "_price", OBJPROP_RAY, false);
-    ObjectSetInteger(0, name + "_price", OBJPROP_WIDTH, 1);
-    
-    // Линия на индикаторе
-    if(StringFind(type, "Stoch") >= 0)
-    {
-        if(!ObjectCreate(0, name + "_ind", OBJ_TREND, g_stoch_window, time1, ind1, time2, ind2))
-        {
-            Print("Ошибка создания линии Stochastic: ", GetLastError());
-            return;
-        }
-    }
-    else if(StringFind(type, "MACD") >= 0)
-    {
-        if(!ObjectCreate(0, name + "_ind", OBJ_TREND, g_macd_window, time1, ind1, time2, ind2))
-        {
-            Print("Ошибка создания линии MACD: ", GetLastError());
-            return;
-        }
-    }
-    
-    ObjectSetInteger(0, name + "_ind", OBJPROP_COLOR, clr);
-    ObjectSetInteger(0, name + "_ind", OBJPROP_STYLE, style);
-    ObjectSetInteger(0, name + "_ind", OBJPROP_RAY, false);
-    ObjectSetInteger(0, name + "_ind", OBJPROP_WIDTH, 1);
-    
-    // Добавляем текст с типом дивергенции
-    string text_name = name + "_text";
-    if(!ObjectCreate(0, text_name, OBJ_TEXT, 0, time1, price1))
-    {
-        Print("Ошибка создания текста: ", GetLastError());
-        return;
-    }
-    
-    // Устанавливаем текст и его положение в зависимости от типа дивергенции
-    ObjectSetString(0, text_name, OBJPROP_TEXT, type);
-    ObjectSetInteger(0, text_name, OBJPROP_COLOR, clr);
-    ObjectSetInteger(0, text_name, OBJPROP_FONTSIZE, 8);
-    
-    // Позиционируем текст выше или ниже цены в зависимости от типа дивергенции
-    double text_offset = is_bullish ? -10 * g_point : 10 * g_point;
-    ObjectSetDouble(0, text_name, OBJPROP_PRICE, price1 + text_offset);
-    
     // Добавляем стрелки для лучшей визуализации
     string arrow_name = name + "_arrow";
     if(!ObjectCreate(0, arrow_name, OBJ_ARROW, 0, time1, price1))
@@ -585,4 +545,24 @@ void DrawDivergenceLine(int idx1, int idx2, double price1, double price2,
     ObjectSetInteger(0, arrow_name, OBJPROP_COLOR, clr);
     ObjectSetInteger(0, arrow_name, OBJPROP_WIDTH, 1);
     ObjectSetDouble(0, arrow_name, OBJPROP_PRICE, price1 + (is_bullish ? -15 * g_point : 15 * g_point));
+    
+    // Расчёт TP и SL на основе ATR
+    double atr[];
+    ArraySetAsSeries(atr, true);
+    if(CopyBuffer(g_atr_handle, 0, 0, 1, atr) > 0)
+    {
+        double atr_value = atr[0];
+        double tp, sl;
+        if(is_bullish)
+        {
+            tp = price1 + 2 * atr_value;
+            sl = price1 - atr_value;
+        }
+        else
+        {
+            tp = price1 - 2 * atr_value;
+            sl = price1 + atr_value;
+        }
+        Print("Дивергенция ", type, " на баре ", idx1, ": TP = ", tp, ", SL = ", sl);
+    }
 } 
