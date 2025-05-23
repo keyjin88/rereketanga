@@ -39,7 +39,7 @@ input color HiddenBullish = clrOrange;   // Цвет скрытой бычьей
 input int HiddenBullishStyle = STYLE_DASH; // Стиль скрытой бычьей дивергенции
 input color DoubleText = clrYellow;      // Цвет текста двойной дивергенции
 input double MACDPickDif = 2.0;          // Минимальная разница для пиков MACD
-input int NrLoad = 10;                   // Количество баров для анализа
+input int NrLoad = 200;                   // Количество баров для анализа
 
 // Глобальные переменные
 int g_stoch_handle;                      // Хендл индикатора Stochastic
@@ -564,5 +564,27 @@ void DrawDivergenceLine(int idx1, int idx2, double price1, double price2,
             sl = price1 + atr_value;
         }
         Print("Дивергенция ", type, " на баре ", idx1, ": TP = ", tp, ", SL = ", sl);
+        
+        // Отрисовка уровня SL в виде крестика
+        string sl_name = name + "_sl";
+        if(!ObjectCreate(0, sl_name, OBJ_ARROW, 0, time1, sl))
+        {
+            Print("Ошибка создания SL: ", GetLastError());
+            return;
+        }
+        ObjectSetInteger(0, sl_name, OBJPROP_ARROWCODE, 251); // Крестик
+        ObjectSetInteger(0, sl_name, OBJPROP_COLOR, clr);
+        ObjectSetInteger(0, sl_name, OBJPROP_WIDTH, 1);
+        
+        // Отрисовка уровня TP в виде галочки
+        string tp_name = name + "_tp";
+        if(!ObjectCreate(0, tp_name, OBJ_ARROW, 0, time1, tp))
+        {
+            Print("Ошибка создания TP: ", GetLastError());
+            return;
+        }
+        ObjectSetInteger(0, tp_name, OBJPROP_ARROWCODE, 252); // Галочка
+        ObjectSetInteger(0, tp_name, OBJPROP_COLOR, clr);
+        ObjectSetInteger(0, tp_name, OBJPROP_WIDTH, 1);
     }
 } 
