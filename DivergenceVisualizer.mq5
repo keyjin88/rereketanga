@@ -46,6 +46,11 @@ input int ATRPeriod = 14;                 // Период ATR
 input double ATRMultiplierTP = 2.0;       // Множитель ATR для TP
 input double ATRMultiplierSL = 1.0;       // Множитель ATR для SL
 
+// Добавляем новые входные параметры для алертов
+input bool EnableAlerts = true;            // Включить алерты
+input bool EnableEmailAlerts = false;      // Включить email-алерты
+input bool EnablePushAlerts = false;       // Включить push-алерты
+
 // Глобальные переменные
 int g_stoch_handle;                      // Хендл индикатора Stochastic
 int g_macd_handle;                       // Хендл индикатора MACD
@@ -594,5 +599,16 @@ void DrawDivergenceLine(int idx1, int idx2, double price1, double price2,
         ObjectSetInteger(0, tp_name, OBJPROP_ARROWCODE, 252); // Галочка
         ObjectSetInteger(0, tp_name, OBJPROP_COLOR, clr);
         ObjectSetInteger(0, tp_name, OBJPROP_WIDTH, 1);
+        
+        // Отправка алертов
+        if(EnableAlerts)
+        {
+            string message = "Дивергенция " + type + " на баре " + IntegerToString(idx1) + ": TP = " + DoubleToString(tp, 5) + ", SL = " + DoubleToString(sl, 5);
+            Alert(message);
+            if(EnableEmailAlerts)
+                SendMail("Divergence Alert", message);
+            if(EnablePushAlerts)
+                SendNotification(message);
+        }
     }
 } 
