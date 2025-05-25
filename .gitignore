@@ -1,0 +1,42 @@
+# Скомпилированные файлы MQL4/MQL5
+*.ex4
+*.ex5
+
+# Временные файлы
+*.tmp
+*.temp
+*~
+
+# Логи
+*.log
+
+# Файлы системы Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Файлы MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Файлы настроек редакторов
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Файлы настроек MetaTrader
+*.set
+*.tpl
+*.chr
+
+# Папки сборки и кэша
+build/
+cache/
+temp/
+
+# Персональные настройки
+config.local.*
+*.local.* 

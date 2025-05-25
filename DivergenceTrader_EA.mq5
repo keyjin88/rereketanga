@@ -58,8 +58,8 @@ input bool StochBullish = true;             // Торговать бычьи д�
 input bool MACDBearish = true;              // Торговать медвежьи дивергенции MACD
 input bool MACDBullish = true;              // Торговать бычьи дивергенции MACD
 input bool OnlyDoubleDivergences = false;   // Торговать только двойные дивергенции
-input double MACDPickDif = 0.5;             // Минимальная разница для пиков MACD
-input int MinBarsBetweenPeaks = 3;          // Минимальное расстояние между пиками
+input double MACDPickDif = 1.0;             // Минимальная разница для пиков MACD (увеличено с 0.5)
+input int MinBarsBetweenPeaks = 5;          // Минимальное расстояние между пиками (увеличено с 3)
 input int MaxBarsToAnalyze = 50;            // Максимальное количество баров для анализа
 input int NrLoad = 100;                     // Количество баров для анализа
 
@@ -76,10 +76,10 @@ input int MagicNumber = 123456;             // Магический номер
 
 //--- Настройки TP/SL
 input group "=== Настройки TP/SL ==="
-input int ATRPeriod = 14;                   // Период ATR
-input double ATRMultiplierTP = 3.0;         // Множитель ATR для TP (увеличено с 2.0)
-input double ATRMultiplierSL = 1.5;         // Множитель ATR для SL (увеличено с 1.0)
-input bool UseFixedTPSL = true;             // Использовать фиксированные TP/SL (включено по умолчанию)
+input int ATRPeriod = 20;                   // Период ATR (увеличено с 14)
+input double ATRMultiplierTP = 2.5;         // Множитель ATR для TP (уменьшено с 3.0)
+input double ATRMultiplierSL = 1.2;         // Множитель ATR для SL (уменьшено с 1.5)
+input bool UseFixedTPSL = false;            // Использовать фиксированные TP/SL (отключено по умолчанию)
 input int FixedTPPoints = 800;              // Фиксированный TP в пунктах (увеличено с 500)
 input int FixedSLPoints = 400;              // Фиксированный SL в пунктах (увеличено с 250)
 input double MinStopDistanceMultiplier = 2.0; // Множитель минимальной дистанции стопов
@@ -90,6 +90,13 @@ input bool EnableTrailing = true;           // Включить трейлинг
 input double TrailingStart = 200;           // Начать трейлинг после (пунктов)
 input double TrailingStop = 100;            // Шаг трейлинга (пунктов)
 input double TrailingStep = 50;             // Минимальный шаг (пунктов)
+
+//--- Настройки безубытка
+input group "=== Настройки безубытка ==="
+input bool EnableBreakeven = true;          // Включить перевод в безубыток
+input double BreakevenTrigger = 30.0;       // При достижении % от TP переводить в безубыток (уменьшено с 50.0)
+input double BreakevenOffset = 15.0;        // Отступ от цены входа (пунктов) (увеличено с 10.0)
+input bool BreakevenOnce = true;            // Переводить в безубыток только один раз
 
 //--- Настройки времени торговли
 input group "=== Фильтр времени торговли ==="
@@ -106,10 +113,17 @@ input bool TradeFriday = true;              // Торговать в пятни�
 //--- Настройки силы сигнала
 input group "=== Фильтры силы сигнала ==="
 input bool EnableStrengthFilter = true;     // Включить фильтр силы сигнала
-input double MinSignalStrength = 5.0;       // Минимальная сила сигнала (было 10.0)
+input double MinSignalStrength = 15.0;      // Минимальная сила сигнала (увеличено с 5.0)
 input bool RequireStochInZone = true;       // Требовать Stochastic в зоне
 input double StochOverboughtLevel = 60.0;   // Уровень перекупленности (было 70.0)
 input double StochOversoldLevel = 40.0;     // Уровень перепроданности (было 30.0)
+
+//--- Фильтр тренда
+input group "=== Фильтр тренда ==="
+input bool UseTrendFilter = true;           // Использовать фильтр тренда
+input int TrendMA_Period = 50;              // Период MA для определения тренда
+input bool OnlyCounterTrend = true;         // Торговать только против тренда
+input int MinMinutesBetweenSignals = 60;    // Минимум минут между сигналами
 
 //--- Настройки уведомлений
 input group "=== Настройки уведомлений ==="
@@ -123,6 +137,7 @@ input bool AlertOnClose = true;             // Уведомлять о закр�
 int g_stoch_handle;                         // Хендл индикатора Stochastic
 int g_macd_handle;                          // Хендл индикатора MACD
 int g_atr_handle;                           // Хендл индикатора ATR
+int g_trend_ma_handle;                      // Хендл индикатора MA для тренда
 double g_point;                             // Размер пункта
 datetime g_last_signal_time;                // Время последнего сигнала
 datetime g_last_bar_time;                   // Время последнего бара
@@ -133,6 +148,9 @@ Peak g_stoch_max_peaks[];
 Peak g_stoch_min_peaks[];
 Peak g_macd_max_peaks[];
 Peak g_macd_min_peaks[];
+
+//--- Массив для отслеживания позиций в безубытке
+ulong g_breakeven_positions[];              // Тикеты позиций, переведенных в безубыток
 
 //--- Статистика
 struct TradingStats
@@ -190,6 +208,16 @@ int OnInit()
         return INIT_FAILED;
     }
     
+    g_trend_ma_handle = iMA(_Symbol, PERIOD_CURRENT, TrendMA_Period, 0, MODE_SMA, PRICE_CLOSE);
+    if(g_trend_ma_handle == INVALID_HANDLE)
+    {
+        Print("❌ Ошибка создания индикатора MA для тренда: ", GetLastError());
+        IndicatorRelease(g_stoch_handle);
+        IndicatorRelease(g_macd_handle);
+        IndicatorRelease(g_atr_handle);
+        return INIT_FAILED;
+    }
+    
     // Инициализация переменных
     g_point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
     g_last_signal_time = 0;
@@ -204,6 +232,7 @@ int OnInit()
     ArrayResize(g_stoch_min_peaks, 0);
     ArrayResize(g_macd_max_peaks, 0);
     ArrayResize(g_macd_min_peaks, 0);
+    ArrayResize(g_breakeven_positions, 0);
     
     Print("✅ Инициализация завершена успешно");
     Print("📊 Торговля: ", (EnableTrading ? "ВКЛЮЧЕНА" : "ОТКЛЮЧЕНА"));
@@ -211,6 +240,9 @@ int OnInit()
     Print("🎯 Максимум позиций: ", MaxPositions);
     Print("🕒 Фильтр времени открытия: ", (EnableTimeFilter ? SessionStartTime + " - " + SessionEndTime : "ОТКЛЮЧЕН"));
     Print("🔒 Закрытие в конце сессии: ", (CloseAtSessionEnd ? "ВКЛЮЧЕНО" : "ОТКЛЮЧЕНО"));
+    Print("🎯 Трейлинг стоп: ", (EnableTrailing ? "ВКЛЮЧЕН" : "ОТКЛЮЧЕН"));
+    Print("⚖️ Безубыток: ", (EnableBreakeven ? "ВКЛЮЧЕН при " + DoubleToString(BreakevenTrigger, 1) + "%" : "ОТКЛЮЧЕН"));
+    Print("📈 Фильтр тренда: ", (UseTrendFilter ? "ВКЛЮЧЕН (MA" + IntegerToString(TrendMA_Period) + ", только против тренда: " + (OnlyCounterTrend ? "ДА)" : "НЕТ)") : "ОТКЛЮЧЕН"));
     
     return INIT_SUCCEEDED;
 }
@@ -298,6 +330,22 @@ bool ValidateInputs()
         return false;
     }
     
+    // Валидация параметров безубытка
+    if(EnableBreakeven)
+    {
+        if(BreakevenTrigger <= 0 || BreakevenTrigger >= 100)
+        {
+            Print("❌ Триггер безубытка должен быть от 1% до 99%: ", BreakevenTrigger);
+            return false;
+        }
+        
+        if(BreakevenOffset < 0 || BreakevenOffset > 1000)
+        {
+            Print("❌ Отступ безубытка должен быть от 0 до 1000 пунктов: ", BreakevenOffset);
+            return false;
+        }
+    }
+    
     return true;
 }
 
@@ -314,6 +362,9 @@ void OnTick()
     {
         g_last_bar_time = current_time;
         g_first_run = false;
+        
+        // Очистка массива безубытка от закрытых позиций
+        CleanupBreakevenArray();
         
         // Основная логика торговли
         ProcessTradingLogic();
@@ -681,6 +732,22 @@ bool CheckDivergenceAndCreateSignal(const Peak &recent_peak, const Peak &older_p
             return false;
         }
         
+        // Фильтр тренда
+        if(!IsTrendFilterPassed(is_bearish))
+        {
+            if(BacktestMode)
+                Print("ОТЛАДКА: Сигнал отклонен фильтром тренда: ", type);
+            return false;
+        }
+        
+        // Фильтр времени между сигналами
+        if(!IsTimeBetweenSignalsPassed())
+        {
+            if(BacktestMode)
+                Print("ОТЛАДКА: Сигнал отклонен - слишком рано после предыдущего");
+            return false;
+        }
+        
         TradeSignal signal;
         signal.type = type;
         signal.is_bearish = is_bearish;
@@ -691,6 +758,9 @@ bool CheckDivergenceAndCreateSignal(const Peak &recent_peak, const Peak &older_p
         
         // Расчет TP/SL
         CalculateTPSL(signal);
+        
+        // Обновляем время последнего сигнала
+        g_last_signal_time = TimeCurrent();
         
         // Добавляем сигнал в массив
         int idx = ArraySize(signals);
@@ -1073,6 +1143,12 @@ void ManageOpenPositions()
         {
             if(m_position.Symbol() == _Symbol && m_position.Magic() == MagicNumber)
             {
+                // Перевод в безубыток
+                if(EnableBreakeven)
+                {
+                    BreakevenStop(m_position.Ticket());
+                }
+                
                 // Трейлинг стоп
                 if(EnableTrailing)
                 {
@@ -1086,6 +1162,167 @@ void ManageOpenPositions()
                 }
             }
         }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Перевод позиции в безубыток                                    |
+//+------------------------------------------------------------------+
+void BreakevenStop(ulong ticket)
+{
+    if(!m_position.SelectByTicket(ticket))
+        return;
+    
+    // Проверяем, была ли уже переведена в безубыток
+    if(BreakevenOnce && IsPositionInBreakeven(ticket))
+        return;
+    
+    ENUM_POSITION_TYPE pos_type = m_position.PositionType();
+    double entry_price = m_position.PriceOpen();
+    double take_profit = m_position.TakeProfit();
+    double stop_loss = m_position.StopLoss();
+    
+    // Проверяем, есть ли TP (без него нельзя рассчитать процент)
+    if(take_profit == 0)
+        return;
+    
+    double current_price;
+    double profit_distance, target_distance;
+    bool should_breakeven = false;
+    
+    if(pos_type == POSITION_TYPE_BUY)
+    {
+        current_price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+        profit_distance = take_profit - entry_price;
+        target_distance = profit_distance * BreakevenTrigger / 100.0;
+        
+        // Проверяем, достигнут ли триггер
+        if(current_price >= entry_price + target_distance)
+        {
+            should_breakeven = true;
+        }
+    }
+    else if(pos_type == POSITION_TYPE_SELL)
+    {
+        current_price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+        profit_distance = entry_price - take_profit;
+        target_distance = profit_distance * BreakevenTrigger / 100.0;
+        
+        // Проверяем, достигнут ли триггер
+        if(current_price <= entry_price - target_distance)
+        {
+            should_breakeven = true;
+        }
+    }
+    
+    if(should_breakeven)
+    {
+        // Рассчитываем новый SL с отступом
+        double offset = BreakevenOffset * g_point;
+        double new_sl;
+        
+        if(pos_type == POSITION_TYPE_BUY)
+        {
+            new_sl = entry_price + offset;
+            
+            // Проверяем, что новый SL лучше текущего
+            if(stop_loss == 0 || new_sl > stop_loss)
+            {
+                new_sl = NormalizeDouble(new_sl, _Digits);
+                
+                if(m_trade.PositionModify(ticket, new_sl, take_profit))
+                {
+                    Print("⚖️ BUY переведен в безубыток: ", DoubleToString(new_sl, _Digits),
+                          " (триггер: ", DoubleToString(BreakevenTrigger, 1), "%)");
+                    
+                    AddPositionToBreakeven(ticket);
+                    
+                    if(EnableAlerts)
+                        Alert("⚖️ Позиция ", ticket, " переведена в безубыток");
+                }
+            }
+        }
+        else
+        {
+            new_sl = entry_price - offset;
+            
+            // Проверяем, что новый SL лучше текущего
+            if(stop_loss == 0 || new_sl < stop_loss)
+            {
+                new_sl = NormalizeDouble(new_sl, _Digits);
+                
+                if(m_trade.PositionModify(ticket, new_sl, take_profit))
+                {
+                    Print("⚖️ SELL переведен в безубыток: ", DoubleToString(new_sl, _Digits),
+                          " (триггер: ", DoubleToString(BreakevenTrigger, 1), "%)");
+                    
+                    AddPositionToBreakeven(ticket);
+                    
+                    if(EnableAlerts)
+                        Alert("⚖️ Позиция ", ticket, " переведена в безубыток");
+                }
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Проверка, переведена ли позиция в безубыток                    |
+//+------------------------------------------------------------------+
+bool IsPositionInBreakeven(ulong ticket)
+{
+    int size = ArraySize(g_breakeven_positions);
+    for(int i = 0; i < size; i++)
+    {
+        if(g_breakeven_positions[i] == ticket)
+            return true;
+    }
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Добавление позиции в список безубытка                          |
+//+------------------------------------------------------------------+
+void AddPositionToBreakeven(ulong ticket)
+{
+    // Проверяем, что позиция еще не в списке
+    if(IsPositionInBreakeven(ticket))
+        return;
+    
+    int size = ArraySize(g_breakeven_positions);
+    ArrayResize(g_breakeven_positions, size + 1);
+    g_breakeven_positions[size] = ticket;
+}
+
+//+------------------------------------------------------------------+
+//| Очистка закрытых позиций из массива безубытка                  |
+//+------------------------------------------------------------------+
+void CleanupBreakevenArray()
+{
+    if(ArraySize(g_breakeven_positions) == 0) return;
+    
+    ulong temp_array[];
+    ArrayResize(temp_array, 0);
+    
+    for(int i = 0; i < ArraySize(g_breakeven_positions); i++)
+    {
+        // Проверяем, существует ли еще позиция
+        if(m_position.SelectByTicket(g_breakeven_positions[i]))
+        {
+            if(m_position.Symbol() == _Symbol && m_position.Magic() == MagicNumber)
+            {
+                int size = ArraySize(temp_array);
+                ArrayResize(temp_array, size + 1);
+                temp_array[size] = g_breakeven_positions[i];
+            }
+        }
+    }
+    
+    // Копируем обратно
+    ArrayResize(g_breakeven_positions, ArraySize(temp_array));
+    for(int i = 0; i < ArraySize(temp_array); i++)
+    {
+        g_breakeven_positions[i] = temp_array[i];
     }
 }
 
@@ -1191,6 +1428,72 @@ void SortSignalsByStrength(TradeSignal &signals[])
             }
         }
     }
+}
+
+//+------------------------------------------------------------------+
+//| Проверка фильтра тренда                                        |
+//+------------------------------------------------------------------+
+bool IsTrendFilterPassed(bool is_bearish_signal)
+{
+    if(!UseTrendFilter) return true;
+    
+    double ma[];
+    ArraySetAsSeries(ma, true);
+    
+    if(CopyBuffer(g_trend_ma_handle, 0, 0, 1, ma) <= 0) 
+    {
+        Print("⚠️ Ошибка получения данных MA для фильтра тренда");
+        return true; // В случае ошибки разрешаем торговлю
+    }
+    
+    double current_price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    double ma_value = ma[0];
+    
+    if(OnlyCounterTrend)
+    {
+        // BUY сигналы только когда цена ниже MA (разворот вверх от перепроданности)
+        if(!is_bearish_signal && current_price < ma_value) 
+        {
+            Print("✅ Фильтр тренда пройден: BUY сигнал (цена ", DoubleToString(current_price, _Digits), 
+                  " ниже MA ", DoubleToString(ma_value, _Digits), ")");
+            return true;
+        }
+        
+        // SELL сигналы только когда цена выше MA (разворот вниз от перекупленности)
+        if(is_bearish_signal && current_price > ma_value) 
+        {
+            Print("✅ Фильтр тренда пройден: SELL сигнал (цена ", DoubleToString(current_price, _Digits), 
+                  " выше MA ", DoubleToString(ma_value, _Digits), ")");
+            return true;
+        }
+        
+        Print("❌ Фильтр тренда не пройден: ", (is_bearish_signal ? "SELL" : "BUY"), 
+              " сигнал не против тренда (цена: ", DoubleToString(current_price, _Digits), 
+              ", MA: ", DoubleToString(ma_value, _Digits), ")");
+        return false;
+    }
+    
+    // Если OnlyCounterTrend = false, разрешаем все сигналы по тренду
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Проверка времени между сигналами                               |
+//+------------------------------------------------------------------+
+bool IsTimeBetweenSignalsPassed()
+{
+    if(MinMinutesBetweenSignals <= 0) return true;
+    
+    datetime current_time = TimeCurrent();
+    int minutes_passed = (int)((current_time - g_last_signal_time) / 60);
+    
+    if(minutes_passed >= MinMinutesBetweenSignals)
+    {
+        return true;
+    }
+    
+    Print("⏱️ Фильтр времени: прошло ", minutes_passed, " мин, требуется ", MinMinutesBetweenSignals, " мин");
+    return false;
 }
 
 //+------------------------------------------------------------------+
@@ -1306,6 +1609,8 @@ void OnDeinit(const int reason)
         IndicatorRelease(g_macd_handle);
     if(g_atr_handle != INVALID_HANDLE)
         IndicatorRelease(g_atr_handle);
+    if(g_trend_ma_handle != INVALID_HANDLE)
+        IndicatorRelease(g_trend_ma_handle);
         
     Print("✅ Деинициализация завершена");
 } 
