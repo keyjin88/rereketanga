@@ -2,10 +2,18 @@
 //|                                      DivergenceTrader_EA.mq5    |
 //|                          Copyright 2024, Expert Advisor Version |
 //|                             Автоматическая торговля дивергенций |
+//|                                    Оптимизировано для M15 EURUSD |
+//|                                                                  |
+//| РЕКОМЕНДАЦИИ ДЛЯ M15 EURUSD:                                    |
+//| - Лучшее время торговли: 07:00-20:00 GMT (европейская + US)    |
+//| - Рекомендуемый риск: 1-2% на сделку                           |
+//| - Спред должен быть менее 3 пипсов                             |
+//| - Тестировать на исторических данных минимум 3 месяца          |
+//| - Избегать торговли во время важных новостей EUR/USD           |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2024, Expert Advisor Version"
 #property link      ""
-#property version   "1.00"
+#property version   "1.01"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -39,91 +47,91 @@ struct TradeSignal
     int      signal_bar;     // Бар сигнала
 };
 
-//--- Входные параметры для Stochastic
+//--- Входные параметры для Stochastic (оптимизировано для M15)
 input group "=== Настройки Stochastic ==="
-input int StochKPeriod = 8;                 // Период %K
+input int StochKPeriod = 14;                // Период %K (оптимизировано для M15)
 input int StochDPeriod = 3;                 // Период %D
-input int StochSlowing = 5;                 // Замедление
+input int StochSlowing = 3;                 // Замедление (уменьшено для быстрой реакции)
 
-//--- Входные параметры для MACD
+//--- Входные параметры для MACD (стандартные настройки подходят для M15)
 input group "=== Настройки MACD ==="
 input int MACDFastEMA = 12;                 // Быстрый EMA
 input int MACDSlowEMA = 26;                 // Медленный EMA
 input int MACDSignalPeriod = 9;             // Период сигнальной линии
 
-//--- Настройки поиска дивергенций
+//--- Настройки поиска дивергенций (оптимизировано для M15)
 input group "=== Настройки дивергенций ==="
 input bool StochBearish = true;             // Торговать медвежьи дивергенции Stochastic
 input bool StochBullish = true;             // Торговать бычьи дивергенции Stochastic
 input bool MACDBearish = true;              // Торговать медвежьи дивергенции MACD
 input bool MACDBullish = true;              // Торговать бычьи дивергенции MACD
 input bool OnlyDoubleDivergences = false;   // Торговать только двойные дивергенции
-input double MACDPickDif = 1.0;             // Минимальная разница для пиков MACD (увеличено с 0.5)
-input int MinBarsBetweenPeaks = 5;          // Минимальное расстояние между пиками (увеличено с 3)
-input int MaxBarsToAnalyze = 50;            // Максимальное количество баров для анализа
-input int NrLoad = 100;                     // Количество баров для анализа
+input double MACDPickDif = 0.8;             // Минимальная разница для пиков MACD (оптимизировано для EURUSD)
+input int MinBarsBetweenPeaks = 8;          // Минимальное расстояние между пиками (оптимизировано для M15)
+input int MaxBarsToAnalyze = 80;            // Максимальное количество баров для анализа (увеличено для M15)
+input int NrLoad = 120;                     // Количество баров для анализа (увеличено для M15)
 
 //--- Настройки торговли
 input group "=== Настройки торговли ==="
 input bool EnableTrading = true;            // Разрешить торговлю
 input bool BacktestMode = false;            // Режим тестирования (анализ исторических данных)
 input double LotSize = 0.1;                 // Размер лота
-input bool UseAutoLotSize = false;          // Автоматический расчет лота
-input double RiskPercent = 2.0;             // Риск на сделку (% от депозита)
-input int MaxPositions = 1;                 // Максимальное количество позиций
-input bool AllowOpposite = false;           // Разрешить противоположные позиции
-input int MagicNumber = 123456;             // Магический номер
+input bool UseAutoLotSize = true;           // Автоматический расчет лота (включен по умолчанию)
+input double RiskPercent = 1.5;             // Риск на сделку (% от депозита, уменьшен для M15)
+input int MaxPositions = 2;                 // Максимальное количество позиций (увеличено для M15)
+input bool AllowOpposite = true;            // Разрешить противоположные позиции (включено для M15)
+input int MagicNumber = 151234;             // Магический номер (изменен для M15 версии)
 
-//--- Настройки TP/SL
+//--- Настройки TP/SL (оптимизировано для M15 EURUSD)
 input group "=== Настройки TP/SL ==="
-input int ATRPeriod = 20;                   // Период ATR (увеличено с 14)
-input double ATRMultiplierTP = 2.5;         // Множитель ATR для TP (уменьшено с 3.0)
-input double ATRMultiplierSL = 1.2;         // Множитель ATR для SL (уменьшено с 1.5)
-input bool UseFixedTPSL = false;            // Использовать фиксированные TP/SL (отключено по умолчанию)
-input int FixedTPPoints = 800;              // Фиксированный TP в пунктах (увеличено с 500)
-input int FixedSLPoints = 400;              // Фиксированный SL в пунктах (увеличено с 250)
-input double MinStopDistanceMultiplier = 2.0; // Множитель минимальной дистанции стопов
+input int ATRPeriod = 14;                   // Период ATR (стандартный для M15)
+input double ATRMultiplierTP = 2.0;         // Множитель ATR для TP (уменьшено для M15)
+input double ATRMultiplierSL = 1.5;         // Множитель ATR для SL (оптимизировано для M15)
+input bool UseFixedTPSL = false;            // Использовать фиксированные TP/SL
+input int FixedTPPoints = 300;              // Фиксированный TP в пунктах (оптимизировано для EURUSD M15)
+input int FixedSLPoints = 150;              // Фиксированный SL в пунктах (оптимизировано для EURUSD M15)
+input double MinStopDistanceMultiplier = 1.5; // Множитель минимальной дистанции стопов (уменьшено)
 
-//--- Настройки трейлинга
+//--- Настройки трейлинга (оптимизировано для M15)
 input group "=== Настройки трейлинга ==="
 input bool EnableTrailing = true;           // Включить трейлинг стоп
-input double TrailingStart = 200;           // Начать трейлинг после (пунктов)
-input double TrailingStop = 100;            // Шаг трейлинга (пунктов)
-input double TrailingStep = 50;             // Минимальный шаг (пунктов)
+input double TrailingStart = 150;           // Начать трейлинг после (пунктов, уменьшено для M15)
+input double TrailingStop = 80;             // Шаг трейлинга (пунктов, оптимизировано для M15)
+input double TrailingStep = 30;             // Минимальный шаг (пунктов, уменьшено для M15)
 
-//--- Настройки безубытка
+//--- Настройки безубытка (оптимизировано для M15)
 input group "=== Настройки безубытка ==="
 input bool EnableBreakeven = true;          // Включить перевод в безубыток
-input double BreakevenTrigger = 30.0;       // При достижении % от TP переводить в безубыток (уменьшено с 50.0)
-input double BreakevenOffset = 15.0;        // Отступ от цены входа (пунктов) (увеличено с 10.0)
+input double BreakevenTrigger = 40.0;       // При достижении % от TP переводить в безубыток (увеличено для M15)
+input double BreakevenOffset = 8.0;         // Отступ от цены входа (пунктов, оптимизировано для EURUSD)
 input bool BreakevenOnce = true;            // Переводить в безубыток только один раз
 
-//--- Настройки времени торговли
+//--- Настройки времени торговли (оптимизировано для EURUSD)
 input group "=== Фильтр времени торговли ==="
 input bool EnableTimeFilter = true;         // Включить фильтр времени для открытия позиций
 input bool CloseAtSessionEnd = false;       // Закрывать позиции в конце торговой сессии
-input string SessionStartTime = "08:00";    // Время начала торговой сессии
-input string SessionEndTime = "17:00";      // Время окончания торговой сессии
+input string SessionStartTime = "07:00";    // Время начала торговой сессии (европейская сессия)
+input string SessionEndTime = "20:00";      // Время окончания торговой сессии (американская сессия)
 input bool TradeMonday = true;              // Торговать в понедельник
 input bool TradeTuesday = true;             // Торговать во вторник
 input bool TradeWednesday = true;           // Торговать в среду
 input bool TradeThursday = true;            // Торговать в четверг
 input bool TradeFriday = true;              // Торговать в пятницу
 
-//--- Настройки силы сигнала
+//--- Настройки силы сигнала (оптимизировано для M15)
 input group "=== Фильтры силы сигнала ==="
 input bool EnableStrengthFilter = true;     // Включить фильтр силы сигнала
-input double MinSignalStrength = 15.0;      // Минимальная сила сигнала (увеличено с 5.0)
+input double MinSignalStrength = 8.0;       // Минимальная сила сигнала (уменьшено для M15)
 input bool RequireStochInZone = true;       // Требовать Stochastic в зоне
-input double StochOverboughtLevel = 60.0;   // Уровень перекупленности (было 70.0)
-input double StochOversoldLevel = 40.0;     // Уровень перепроданности (было 30.0)
+input double StochOverboughtLevel = 75.0;   // Уровень перекупленности (увеличено для M15)
+input double StochOversoldLevel = 25.0;     // Уровень перепроданности (уменьшено для M15)
 
-//--- Фильтр тренда
+//--- Фильтр тренда (оптимизировано для M15)
 input group "=== Фильтр тренда ==="
 input bool UseTrendFilter = true;           // Использовать фильтр тренда
-input int TrendMA_Period = 50;              // Период MA для определения тренда
-input bool OnlyCounterTrend = true;         // Торговать только против тренда
-input int MinMinutesBetweenSignals = 60;    // Минимум минут между сигналами
+input int TrendMA_Period = 34;              // Период MA для определения тренда (оптимизировано для M15)
+input bool OnlyCounterTrend = false;        // Торговать по тренду (изменено для M15)
+input int MinMinutesBetweenSignals = 30;    // Минимум минут между сигналами (уменьшено для M15)
 
 //--- Настройки уведомлений
 input group "=== Настройки уведомлений ==="
@@ -133,11 +141,25 @@ input bool EnablePushAlerts = false;        // Включить push-уведо�
 input bool AlertOnEntry = true;             // Уведомлять о входах
 input bool AlertOnClose = true;             // Уведомлять о закрытиях
 
+//--- Настройки интеллектуального закрытия позиций
+input group "=== Интеллектуальное закрытие позиций ==="
+input bool EnableSmartExit = true;          // Включить умное закрытие позиций
+input bool CloseOnOppositeSignal = true;    // Закрывать при противоположном сигнале
+input double OppositeSignalMinStrength = 12.0; // Минимальная сила противоположного сигнала для закрытия
+input bool CloseOnWeakening = true;         // Закрывать при ослаблении движения
+input bool UseRSIForWeakening = true;       // Использовать RSI для определения ослабления
+input int RSIPeriod = 14;                   // Период RSI
+input double RSIWeakeningLevel = 70.0;      // Уровень RSI для определения ослабления (для BUY)
+input bool UsePartialClose = true;          // Частичное закрытие позиций
+input double PartialClosePercent = 50.0;    // Процент закрытия при ослаблении
+input int MinProfitPointsForSmartExit = 100; // Минимум пунктов прибыли для умного закрытия
+
 //--- Глобальные переменные
 int g_stoch_handle;                         // Хендл индикатора Stochastic
 int g_macd_handle;                          // Хендл индикатора MACD
 int g_atr_handle;                           // Хендл индикатора ATR
 int g_trend_ma_handle;                      // Хендл индикатора MA для тренда
+int g_rsi_handle;                           // Хендл индикатора RSI для умного закрытия
 double g_point;                             // Размер пункта
 datetime g_last_signal_time;                // Время последнего сигнала
 datetime g_last_bar_time;                   // Время последнего бара
@@ -171,7 +193,14 @@ TradingStats g_stats;
 //+------------------------------------------------------------------+
 int OnInit()
 {
-    Print("=== Инициализация DivergenceTrader EA ===");
+    Print("=== Инициализация DivergenceTrader EA для M15 EURUSD ===");
+    
+    // Проверка символа и таймфрейма
+    if(_Symbol != "EURUSD")
+        Print("⚠️ ВНИМАНИЕ: Советник оптимизирован для EURUSD, текущий символ: ", _Symbol);
+    
+    if(_Period != PERIOD_M15)
+        Print("⚠️ ВНИМАНИЕ: Советник оптимизирован для M15, текущий таймфрейм: ", EnumToString(_Period));
     
     // Валидация параметров
     if(!ValidateInputs())
@@ -218,6 +247,21 @@ int OnInit()
         return INIT_FAILED;
     }
     
+    // Инициализация RSI для умного закрытия
+    if(EnableSmartExit && UseRSIForWeakening)
+    {
+        g_rsi_handle = iRSI(_Symbol, PERIOD_CURRENT, RSIPeriod, PRICE_CLOSE);
+        if(g_rsi_handle == INVALID_HANDLE)
+        {
+            Print("❌ Ошибка создания индикатора RSI: ", GetLastError());
+            IndicatorRelease(g_stoch_handle);
+            IndicatorRelease(g_macd_handle);
+            IndicatorRelease(g_atr_handle);
+            IndicatorRelease(g_trend_ma_handle);
+            return INIT_FAILED;
+        }
+    }
+    
     // Инициализация переменных
     g_point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
     g_last_signal_time = 0;
@@ -238,11 +282,36 @@ int OnInit()
     Print("📊 Торговля: ", (EnableTrading ? "ВКЛЮЧЕНА" : "ОТКЛЮЧЕНА"));
     Print("💰 Размер лота: ", (UseAutoLotSize ? "Авто (" + DoubleToString(RiskPercent, 1) + "%)" : DoubleToString(LotSize, 2)));
     Print("🎯 Максимум позиций: ", MaxPositions);
-    Print("🕒 Фильтр времени открытия: ", (EnableTimeFilter ? SessionStartTime + " - " + SessionEndTime : "ОТКЛЮЧЕН"));
+    Print("🔄 Противоположные позиции: ", (AllowOpposite ? "РАЗРЕШЕНЫ" : "ЗАПРЕЩЕНЫ"));
+    Print("🕒 Фильтр времени открытия: ", (EnableTimeFilter ? SessionStartTime + " - " + SessionEndTime + " (EURUSD сессии)" : "ОТКЛЮЧЕН"));
     Print("🔒 Закрытие в конце сессии: ", (CloseAtSessionEnd ? "ВКЛЮЧЕНО" : "ОТКЛЮЧЕНО"));
-    Print("🎯 Трейлинг стоп: ", (EnableTrailing ? "ВКЛЮЧЕН" : "ОТКЛЮЧЕН"));
+    Print("🎯 Трейлинг стоп: ", (EnableTrailing ? "ВКЛЮЧЕН (начало: " + DoubleToString(TrailingStart, 0) + " пп)" : "ОТКЛЮЧЕН"));
     Print("⚖️ Безубыток: ", (EnableBreakeven ? "ВКЛЮЧЕН при " + DoubleToString(BreakevenTrigger, 1) + "%" : "ОТКЛЮЧЕН"));
-    Print("📈 Фильтр тренда: ", (UseTrendFilter ? "ВКЛЮЧЕН (MA" + IntegerToString(TrendMA_Period) + ", только против тренда: " + (OnlyCounterTrend ? "ДА)" : "НЕТ)") : "ОТКЛЮЧЕН"));
+    Print("📈 Фильтр тренда: ", (UseTrendFilter ? "ВКЛЮЧЕН (MA" + IntegerToString(TrendMA_Period) + ", торговля: " + (OnlyCounterTrend ? "ПРОТИВ тренда)" : "ПО тренду)") : "ОТКЛЮЧЕН"));
+    Print("📊 Stochastic: K" + IntegerToString(StochKPeriod) + ", D" + IntegerToString(StochDPeriod) + ", зоны: " + DoubleToString(StochOversoldLevel, 0) + "-" + DoubleToString(StochOverboughtLevel, 0));
+    Print("📈 MACD: " + IntegerToString(MACDFastEMA) + "," + IntegerToString(MACDSlowEMA) + "," + IntegerToString(MACDSignalPeriod) + ", мин.разность: " + DoubleToString(MACDPickDif, 1));
+    Print("⏱️ M15 оптимизация: Пики через " + IntegerToString(MinBarsBetweenPeaks) + " баров, анализ " + IntegerToString(MaxBarsToAnalyze) + " баров");
+    
+    // Информация об интеллектуальном закрытии
+    if(EnableSmartExit)
+    {
+        Print("🧠 Умное закрытие: ВКЛЮЧЕНО");
+        if(CloseOnOppositeSignal)
+            Print("🔄 Закрытие по противоположному сигналу: мин.сила " + DoubleToString(OppositeSignalMinStrength, 1));
+        if(CloseOnWeakening)
+        {
+            Print("📉 Закрытие при ослаблении: ВКЛЮЧЕНО");
+            if(UseRSIForWeakening)
+                Print("📊 RSI фильтр: период " + IntegerToString(RSIPeriod) + ", уровень " + DoubleToString(RSIWeakeningLevel, 1));
+            if(UsePartialClose)
+                Print("🔸 Частичное закрытие: " + DoubleToString(PartialClosePercent, 1) + "%");
+        }
+        Print("💰 Мин.прибыль для умного закрытия: " + IntegerToString(MinProfitPointsForSmartExit) + " пунктов");
+    }
+    else
+    {
+        Print("🧠 Умное закрытие: ОТКЛЮЧЕНО");
+    }
     
     return INIT_SUCCEEDED;
 }
@@ -346,6 +415,62 @@ bool ValidateInputs()
         }
     }
     
+    // Дополнительные проверки для EURUSD M15
+    if(_Symbol == "EURUSD")
+    {
+        double spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+        if(spread > 3.0 * SymbolInfoDouble(_Symbol, SYMBOL_POINT))
+        {
+            Print("⚠️ ВНИМАНИЕ: Большой спред для EURUSD: ", DoubleToString(spread, 5), 
+                  " - рекомендуется торговать при спреде менее 3 пипсов");
+        }
+        
+        if(UseAutoLotSize && RiskPercent > 2.0)
+        {
+            Print("⚠️ ВНИМАНИЕ: Для M15 EURUSD рекомендуется риск не более 2% на сделку");
+        }
+    }
+    
+    // Валидация параметров интеллектуального закрытия
+    if(EnableSmartExit)
+    {
+        if(OppositeSignalMinStrength <= 0 || OppositeSignalMinStrength > 100)
+        {
+            Print("❌ Минимальная сила противоположного сигнала должна быть от 1 до 100: ", OppositeSignalMinStrength);
+            return false;
+        }
+        
+        if(UseRSIForWeakening)
+        {
+            if(RSIPeriod < 2 || RSIPeriod > 100)
+            {
+                Print("❌ Период RSI должен быть от 2 до 100: ", RSIPeriod);
+                return false;
+            }
+            
+            if(RSIWeakeningLevel <= 50 || RSIWeakeningLevel >= 100)
+            {
+                Print("❌ Уровень ослабления RSI должен быть от 50 до 100: ", RSIWeakeningLevel);
+                return false;
+            }
+        }
+        
+        if(UsePartialClose)
+        {
+            if(PartialClosePercent <= 0 || PartialClosePercent >= 100)
+            {
+                Print("❌ Процент частичного закрытия должен быть от 1% до 99%: ", PartialClosePercent);
+                return false;
+            }
+        }
+        
+        if(MinProfitPointsForSmartExit < 0 || MinProfitPointsForSmartExit > 10000)
+        {
+            Print("❌ Минимум пунктов прибыли для умного закрытия должен быть от 0 до 10000: ", MinProfitPointsForSmartExit);
+            return false;
+        }
+    }
+    
     return true;
 }
 
@@ -414,6 +539,12 @@ bool WaitForIndicatorData()
     if(CopyBuffer(g_stoch_handle, 0, 0, 1, temp_buffer) <= 0) return false;
     if(CopyBuffer(g_macd_handle, 0, 0, 1, temp_buffer) <= 0) return false;
     if(CopyBuffer(g_atr_handle, 0, 0, 1, temp_buffer) <= 0) return false;
+    
+    // Проверяем RSI только если он используется
+    if(EnableSmartExit && UseRSIForWeakening && g_rsi_handle != INVALID_HANDLE)
+    {
+        if(CopyBuffer(g_rsi_handle, 0, 0, 1, temp_buffer) <= 0) return false;
+    }
     
     return true;
 }
@@ -1137,6 +1268,9 @@ bool OpenPosition(const TradeSignal &signal, double lot_size)
 //+------------------------------------------------------------------+
 void ManageOpenPositions()
 {
+    // Интеллектуальное управление закрытием позиций
+    SmartExitManagement();
+    
     for(int i = PositionsTotal() - 1; i >= 0; i--)
     {
         if(m_position.SelectByIndex(i))
@@ -1472,9 +1606,30 @@ bool IsTrendFilterPassed(bool is_bearish_signal)
               ", MA: ", DoubleToString(ma_value, _Digits), ")");
         return false;
     }
-    
-    // Если OnlyCounterTrend = false, разрешаем все сигналы по тренду
-    return true;
+    else
+    {
+        // Торговля по тренду для M15 EURUSD
+        // BUY сигналы когда цена выше MA (восходящий тренд)
+        if(!is_bearish_signal && current_price > ma_value) 
+        {
+            Print("✅ Фильтр тренда пройден: BUY сигнал по тренду (цена ", DoubleToString(current_price, _Digits), 
+                  " выше MA ", DoubleToString(ma_value, _Digits), ")");
+            return true;
+        }
+        
+        // SELL сигналы когда цена ниже MA (нисходящий тренд)
+        if(is_bearish_signal && current_price < ma_value) 
+        {
+            Print("✅ Фильтр тренда пройден: SELL сигнал по тренду (цена ", DoubleToString(current_price, _Digits), 
+                  " ниже MA ", DoubleToString(ma_value, _Digits), ")");
+            return true;
+        }
+        
+        Print("❌ Фильтр тренда не пройден: ", (is_bearish_signal ? "SELL" : "BUY"), 
+              " сигнал против тренда (цена: ", DoubleToString(current_price, _Digits), 
+              ", MA: ", DoubleToString(ma_value, _Digits), ")");
+        return false;
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -1611,6 +1766,233 @@ void OnDeinit(const int reason)
         IndicatorRelease(g_atr_handle);
     if(g_trend_ma_handle != INVALID_HANDLE)
         IndicatorRelease(g_trend_ma_handle);
+    if(g_rsi_handle != INVALID_HANDLE)
+        IndicatorRelease(g_rsi_handle);
         
     Print("✅ Деинициализация завершена");
+}
+
+//+------------------------------------------------------------------+
+//| Интеллектуальное управление позициями                          |
+//+------------------------------------------------------------------+
+void SmartExitManagement()
+{
+    if(!EnableSmartExit) return;
+    
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        if(m_position.SelectByIndex(i))
+        {
+            if(m_position.Symbol() == _Symbol && m_position.Magic() == MagicNumber)
+            {
+                ulong ticket = m_position.Ticket();
+                ENUM_POSITION_TYPE pos_type = m_position.PositionType();
+                double profit_points = CalculatePositionProfitPoints(ticket);
+                
+                // Проверяем минимальную прибыль для умного закрытия
+                if(profit_points < MinProfitPointsForSmartExit) continue;
+                
+                // Проверка противоположного сигнала
+                if(CloseOnOppositeSignal && ShouldCloseOnOppositeSignal(pos_type))
+                {
+                    ClosePosition(ticket, "Противоположный сигнал");
+                    continue;
+                }
+                
+                // Проверка ослабления движения
+                if(CloseOnWeakening && ShouldCloseOnWeakening(pos_type))
+                {
+                    if(UsePartialClose && profit_points > MinProfitPointsForSmartExit * 2)
+                    {
+                        PartialClosePosition(ticket, "Ослабление движения (частичное)");
+                    }
+                    else
+                    {
+                        ClosePosition(ticket, "Ослабление движения");
+                    }
+                }
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Расчет прибыли позиции в пунктах                               |
+//+------------------------------------------------------------------+
+double CalculatePositionProfitPoints(ulong ticket)
+{
+    if(!m_position.SelectByTicket(ticket)) return 0;
+    
+    double entry_price = m_position.PriceOpen();
+    double current_price;
+    
+    if(m_position.PositionType() == POSITION_TYPE_BUY)
+    {
+        current_price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+        return (current_price - entry_price) / g_point;
+    }
+    else
+    {
+        current_price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+        return (entry_price - current_price) / g_point;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Проверка необходимости закрытия по противоположному сигналу    |
+//+------------------------------------------------------------------+
+bool ShouldCloseOnOppositeSignal(ENUM_POSITION_TYPE pos_type)
+{
+    // Ищем текущие сигналы
+    TradeSignal signals[];
+    ArrayResize(signals, 0);
+    
+    // Обновляем пики
+    FindPeaks(g_stoch_handle, 0, g_stoch_max_peaks, g_stoch_min_peaks, true);
+    FindPeaks(g_macd_handle, 0, g_macd_max_peaks, g_macd_min_peaks, false);
+    
+    // Ищем противоположные сигналы
+    if(pos_type == POSITION_TYPE_BUY)
+    {
+        // Для BUY ищем SELL сигналы
+        if(StochBearish) FindTradingSignals(g_stoch_max_peaks, "StochBearish", true, false, signals);
+        if(MACDBearish) FindTradingSignals(g_macd_max_peaks, "MACDBearish", true, true, signals);
+    }
+    else
+    {
+        // Для SELL ищем BUY сигналы
+        if(StochBullish) FindTradingSignals(g_stoch_min_peaks, "StochBullish", false, false, signals);
+        if(MACDBullish) FindTradingSignals(g_macd_min_peaks, "MACDBullish", false, true, signals);
+    }
+    
+    // Проверяем силу найденных сигналов
+    for(int i = 0; i < ArraySize(signals); i++)
+    {
+        if(signals[i].strength >= OppositeSignalMinStrength)
+        {
+            Print("🔄 Найден сильный противоположный сигнал: ", signals[i].type, 
+                  " (сила: ", DoubleToString(signals[i].strength, 2), ")");
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Проверка необходимости закрытия при ослаблении движения        |
+//+------------------------------------------------------------------+
+bool ShouldCloseOnWeakening(ENUM_POSITION_TYPE pos_type)
+{
+    // Проверка по RSI
+    if(UseRSIForWeakening && g_rsi_handle != INVALID_HANDLE)
+    {
+        double rsi[];
+        ArraySetAsSeries(rsi, true);
+        
+        if(CopyBuffer(g_rsi_handle, 0, 0, 3, rsi) > 0)
+        {
+            double current_rsi = rsi[0];
+            double prev_rsi = rsi[1];
+            double prev2_rsi = rsi[2];
+            
+            if(pos_type == POSITION_TYPE_BUY)
+            {
+                // Для BUY: RSI достиг перекупленности и начал снижаться
+                if(current_rsi >= RSIWeakeningLevel && 
+                   current_rsi < prev_rsi && prev_rsi < prev2_rsi)
+                {
+                    Print("📉 BUY ослабление: RSI ", DoubleToString(current_rsi, 2), 
+                          " снижается от уровня ", DoubleToString(RSIWeakeningLevel, 1));
+                    return true;
+                }
+            }
+            else
+            {
+                // Для SELL: RSI достиг перепроданности и начал расти
+                double sell_weakening_level = 100 - RSIWeakeningLevel; // Например, 30 для SELL
+                if(current_rsi <= sell_weakening_level && 
+                   current_rsi > prev_rsi && prev_rsi > prev2_rsi)
+                {
+                    Print("📈 SELL ослабление: RSI ", DoubleToString(current_rsi, 2), 
+                          " растет от уровня ", DoubleToString(sell_weakening_level, 1));
+                    return true;
+                }
+            }
+        }
+    }
+    
+    // Проверка по Stochastic (дополнительный фильтр)
+    double stoch_main[], stoch_signal[];
+    ArraySetAsSeries(stoch_main, true);
+    ArraySetAsSeries(stoch_signal, true);
+    
+    if(CopyBuffer(g_stoch_handle, 0, 0, 3, stoch_main) > 0 && 
+       CopyBuffer(g_stoch_handle, 1, 0, 3, stoch_signal) > 0)
+    {
+        // Проверяем разворот Stochastic
+        if(pos_type == POSITION_TYPE_BUY)
+        {
+            // Для BUY: Stochastic в зоне перекупленности и %K пересекает %D вниз
+            if(stoch_main[0] > StochOverboughtLevel && 
+               stoch_main[1] > stoch_signal[1] && stoch_main[0] < stoch_signal[0])
+            {
+                Print("📉 BUY ослабление: Stochastic разворот вниз в зоне перекупленности");
+                return true;
+            }
+        }
+        else
+        {
+            // Для SELL: Stochastic в зоне перепроданности и %K пересекает %D вверх
+            if(stoch_main[0] < StochOversoldLevel && 
+               stoch_main[1] < stoch_signal[1] && stoch_main[0] > stoch_signal[0])
+            {
+                Print("📈 SELL ослабление: Stochastic разворот вверх в зоне перепроданности");
+                return true;
+            }
+        }
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Частичное закрытие позиции                                     |
+//+------------------------------------------------------------------+
+void PartialClosePosition(ulong ticket, string reason)
+{
+    if(!m_position.SelectByTicket(ticket)) return;
+    
+    double current_volume = m_position.Volume();
+    double close_volume = NormalizeDouble(current_volume * PartialClosePercent / 100.0, 2);
+    
+    // Проверяем минимальный объем
+    double min_volume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+    if(close_volume < min_volume)
+    {
+        // Если частичный объем меньше минимального, закрываем полностью
+        ClosePosition(ticket, reason + " (полное закрытие)");
+        return;
+    }
+    
+    // Частичное закрытие
+    bool result = m_trade.PositionClosePartial(ticket, close_volume);
+    
+    if(result)
+    {
+        double profit = m_position.Profit() * (close_volume / current_volume);
+        Print("🔸 Частичное закрытие: ", DoubleToString(close_volume, 2), " лотов | ", 
+              reason, " | Прибыль: ", DoubleToString(profit, 2));
+        
+        if(AlertOnClose)
+        {
+            string alert_msg = StringFormat("ЧАСТИЧНОЕ ЗАКРЫТИЕ: %s | Закрыто %.2f из %.2f лотов | Прибыль: %.2f",
+                                             reason, close_volume, current_volume, profit);
+            SendAlert(alert_msg);
+        }
+    }
+    else
+    {
+        Print("❌ Ошибка частичного закрытия: ", m_trade.ResultRetcode());
+    }
 } 
