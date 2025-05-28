@@ -1,0 +1,62 @@
+; Настройки для отладки TrendFollower M15 EA в тестере стратегий
+; Все фильтры максимально смягчены для выявления проблем
+
+; === Основные настройки ===
+EnableTrading=1
+LotSize=0.10
+UseAutoLotSize=0
+RiskPercent=1.50
+MaxPositions=1
+MagicNumber=150001
+
+; === Индикаторы тренда ===  
+FastMA_Period=21
+SlowMA_Period=50
+TrendMA_Period=100
+MA_Method=1
+MA_Price=1
+
+; === Фильтры импульса ===
+RSI_Period=14
+RSI_Overbought=70.00
+RSI_Oversold=30.00
+Stoch_K_Period=14
+Stoch_D_Period=3
+Stoch_Slowing=3
+
+; === Фильтр волатильности ===
+ATR_Period=14
+MinATR_Multiplier=0.50
+MaxATR_Multiplier=5.00
+
+; === Управление рисками ===
+ATR_SL_Multiplier=2.00
+ATR_TP_Multiplier=3.00
+MinRiskReward=1.50
+
+; === Время торговли (ОТКЛЮЧЕНО) ===
+EnableTimeFilter=0
+SessionStart=00:00
+SessionEnd=23:59
+AvoidFridayEvening=0
+AvoidMondayMorning=0
+
+; === Дополнительные фильтры (СМЯГЧЕНЫ) ===
+MinConfidence=60.00
+MinBarsSinceSignal=1
+UseSpreadFilter=0
+MaxSpreadPips=5.00
+EnableDebugMode=1
+
+; === Трейлинг и безубыток ===
+EnableTrailing=1
+TrailingStart_Pips=20.00
+TrailingStep_Pips=10.00
+EnableBreakeven=1
+BreakevenStart_Pips=15.00
+BreakevenOffset_Pips=5.00
+
+; === Уведомления ===
+EnableAlerts=1
+AlertOnEntry=1
+AlertOnExit=1 

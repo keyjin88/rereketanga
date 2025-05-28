@@ -1,0 +1,107 @@
+;--- DivergenceTrader EA - Настройки оптимизации для M15 EURUSD
+;--- Используйте эти параметры в тестере стратегий MetaTrader
+
+;=== Настройки Stochastic ===
+StochKPeriod=14||10||21||1||Y
+StochDPeriod=3||3||5||1||N
+StochSlowing=3||3||5||1||N
+
+;=== Настройки MACD ===
+MACDFastEMA=12||12||15||1||N
+MACDSlowEMA=26||24||28||1||N
+MACDSignalPeriod=9||8||10||1||N
+
+;=== Настройки дивергенций ===
+StochBearish=1||0||1||1||Y
+StochBullish=1||0||1||1||Y
+MACDBearish=1||0||1||1||Y
+MACDBullish=1||0||1||1||Y
+OnlyDoubleDivergences=0||0||1||1||N
+MACDPickDif=0.8||0.5||1.2||0.1||Y
+MinBarsBetweenPeaks=8||6||12||1||Y
+MaxBarsToAnalyze=80||60||100||10||N
+NrLoad=120||100||150||10||N
+
+;=== Настройки торговли ===
+EnableTrading=1||1||1||1||N
+BacktestMode=0||0||1||1||N
+LotSize=0.1||0.01||0.5||0.01||N
+UseAutoLotSize=1||0||1||1||Y
+RiskPercent=1.5||1.0||2.5||0.25||Y
+MaxPositions=2||1||3||1||Y
+AllowOpposite=1||0||1||1||Y
+MagicNumber=151234||151234||151234||1||N
+
+;=== Настройки TP/SL ===
+ATRPeriod=14||12||20||2||Y
+ATRMultiplierTP=2.0||1.5||3.0||0.25||Y
+ATRMultiplierSL=1.5||1.0||2.0||0.25||Y
+UseFixedTPSL=0||0||1||1||N
+FixedTPPoints=300||200||500||50||N
+FixedSLPoints=150||100||250||25||N
+MinStopDistanceMultiplier=1.5||1.0||2.5||0.25||N
+
+;=== Настройки трейлинга ===
+EnableTrailing=1||0||1||1||Y
+TrailingStart=150||100||250||25||Y
+TrailingStop=80||50||120||10||N
+TrailingStep=30||20||50||5||N
+
+;=== Настройки безубытка ===
+EnableBreakeven=1||0||1||1||Y
+BreakevenTrigger=40.0||25.0||60.0||5.0||Y
+BreakevenOffset=8.0||5.0||15.0||2.0||N
+BreakevenOnce=1||0||1||1||N
+
+;=== Фильтр времени торговли ===
+EnableTimeFilter=1||0||1||1||Y
+CloseAtSessionEnd=0||0||1||1||N
+SessionStartTime="07:00"||"07:00"||"07:00"||1||N
+SessionEndTime="20:00"||"20:00"||"20:00"||1||N
+TradeMonday=1||0||1||1||N
+TradeTuesday=1||0||1||1||N
+TradeWednesday=1||0||1||1||N
+TradeThursday=1||0||1||1||N
+TradeFriday=1||0||1||1||N
+
+;=== Фильтры силы сигнала ===
+EnableStrengthFilter=1||0||1||1||Y
+MinSignalStrength=8.0||5.0||15.0||1.0||Y
+RequireStochInZone=1||0||1||1||Y
+StochOverboughtLevel=75.0||65.0||85.0||5.0||Y
+StochOversoldLevel=25.0||15.0||35.0||5.0||Y
+
+;=== Фильтр тренда ===
+UseTrendFilter=1||0||1||1||Y
+TrendMA_Period=34||20||50||5||Y
+OnlyCounterTrend=0||0||1||1||Y
+MinMinutesBetweenSignals=30||15||60||15||N
+
+;=== Настройки уведомлений ===
+EnableAlerts=1||0||1||1||N
+EnableEmailAlerts=0||0||1||1||N
+EnablePushAlerts=0||0||1||1||N
+AlertOnEntry=1||0||1||1||N
+AlertOnClose=1||0||1||1||N
+
+;=== ПРИОРИТЕТНЫЕ ПАРАМЕТРЫ ДЛЯ ОПТИМИЗАЦИИ ===
+;--- Отмечены как Y в последнем поле
+;--- Рекомендуется оптимизировать в первую очередь:
+;--- 1. StochKPeriod (10-21)
+;--- 2. MACDPickDif (0.5-1.2) 
+;--- 3. MinBarsBetweenPeaks (6-12)
+;--- 4. RiskPercent (1.0-2.5)
+;--- 5. ATRMultiplierTP (1.5-3.0)
+;--- 6. ATRMultiplierSL (1.0-2.0)
+;--- 7. MinSignalStrength (5.0-15.0)
+;--- 8. TrendMA_Period (20-50)
+
+;=== ЭТАПЫ ОПТИМИЗАЦИИ ===
+;--- Этап 1: Базовые параметры индикаторов
+;---   StochKPeriod, MACDPickDif, MinBarsBetweenPeaks
+;--- Этап 2: Управление рисками  
+;---   RiskPercent, ATRMultiplierTP, ATRMultiplierSL
+;--- Этап 3: Фильтры
+;---   MinSignalStrength, TrendMA_Period, StochOverboughtLevel
+;--- Этап 4: Трейлинг и безубыток
+;---   TrailingStart, BreakevenTrigger 
